@@ -1,0 +1,17 @@
+{
+  "name": "ado-powershell",
+  "version": "1.0.0",
+  "description": "Azure DevOps PowerShell skill for GitHub Copilot, Claude Code, and other AI agents.",
+  "keywords": ["ado", "azure-devops", "powershell", "copilot-skill", "agent-skill"],
+  "bin": {
+    "adops": "bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    ".github/skills/"
+  ],
+  "engines": {
+    "node": ">=16"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,7 @@
+{
+  "org": "ado-organization",
+  "project": "ado-project",
+  "apiVersion": "7.1",
+  "baseUrl": "https://dev.azure.com",
+  "pat": "ADOPersonalAccessToken"
+}
