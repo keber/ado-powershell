@@ -3,7 +3,7 @@ name: ado-powershell
 description: "Access Azure DevOps (ADO) via REST API using PowerShell. Covers reading and writing Work Items, Test Plans, Test Runs, Git Repositories, Pipelines, and Iterations. Use this skill when the user asks to query, create, or update items in Azure DevOps, or mentions ADO, Work Items, Test Plans, sprints, pipelines, repositories, or ADO bugs."
 compatibility: "Requires PowerShell 7+ (or Windows PowerShell 5.1). Needs Internet access to reach dev.azure.com. The ADO_PAT environment variable must be set."
 metadata:
-  author: garcesfruit-desarrollo
+  author: keber
   version: "1.0.0"
   api-version: "7.1"
   standard: agentskills.io
