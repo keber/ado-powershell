@@ -147,6 +147,23 @@ function Invoke-AdoGet {
         -MaxRetries $MaxRetries -RetryDelaySec $RetryDelaySec
 }
 
+# -- Authenticated file download: wraps Invoke-WebRequest -OutFile with no business logic
+function Invoke-AdoDownload {
+    <#
+    .SYNOPSIS
+      Downloads a resource from an authenticated ADO URL directly to a local file.
+    .PARAMETER Uri      Full URL to download (including api-version if required).
+    .PARAMETER OutFile  Local path where the file will be saved.
+    .PARAMETER Headers  Auth headers (hashtable). Defaults to New-AdoHeaders.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Uri,
+        [Parameter(Mandatory)][string]$OutFile,
+        [hashtable]$Headers
+    )
+    if (-not $Headers) { $Headers = New-AdoHeaders }
+    Invoke-WebRequest -Uri $Uri -Headers $Headers -OutFile $OutFile -ErrorAction Stop
+}
 #endregion
 
 #region -- Session object --

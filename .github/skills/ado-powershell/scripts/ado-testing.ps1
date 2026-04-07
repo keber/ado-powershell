@@ -62,6 +62,13 @@ function Get-AdoTestPlan {
 function Get-AdoTestSuites {
     <#
     .SYNOPSIS  Lists the Test Suites of a Test Plan.
+        .DESCRIPTION
+      Tries multiple API endpoint shapes in order to maximise compatibility across
+      ADO organisations and API versions:
+        1. /_apis/test/plans/{planId}/suites  (classic, most compatible)
+        2. /_apis/testplan/Plans/{planId}/Suites?api-version={v}-preview.2
+        3. /_apis/testplan/Plans/{planId}/Suites?api-version={v}-preview.1
+        4. /_apis/testplan/Plans/{planId}/Suites?api-version={v}
     #>
     param(
         [Parameter(Mandatory)][int]$PlanId,
@@ -70,13 +77,36 @@ function Get-AdoTestSuites {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
-    $r = Invoke-AdoGet -Uri "$(Get-AdoBaseUrl $Org)/$Project/_apis/testplan/plans/$PlanId/suites?api-version=$ApiV" -Headers $Headers
-    return $r.value
+    $base = "$(Get-AdoBaseUrl $Org)/$Project"
+    $urls = @(
+        "$base/_apis/test/plans/$PlanId/suites?api-version=$ApiV",
+        "$base/_apis/testplan/Plans/$PlanId/Suites?api-version=$ApiV-preview.2",
+        "$base/_apis/testplan/Plans/$PlanId/Suites?api-version=$ApiV-preview.1",
+        "$base/_apis/testplan/Plans/$PlanId/Suites?api-version=$ApiV"
+    )
+    foreach ($u in $urls) {
+        try {
+            $r = Invoke-AdoGet -Uri $u -Headers $Headers -MaxRetries 1
+            if ($r -and $r.value -and @($r.value).Count -gt 0) { return $r.value }
+        }
+        catch { continue }
+    }
+    return @()
 }
 
 function Get-AdoTestCases {
     <#
     .SYNOPSIS  Lists the Test Cases of a Suite.
+        .DESCRIPTION
+      Tries multiple API endpoint shapes in order to maximise compatibility across
+      ADO organisations and API versions:
+        1. /_apis/test/plans/{planId}/suites/{suiteId}/testcases  (classic)
+        2. /_apis/testplan/Plans/{planId}/Suites/{suiteId}/TestCase?api-version={v}-preview.2
+        3. /_apis/testplan/Plans/{planId}/Suites/{suiteId}/TestCase?api-version={v}-preview.1
+        4. /_apis/testplan/Plans/{planId}/Suites/{suiteId}/TestCases?api-version={v}
+        5. /_apis/test/suites/{suiteId}/testcases  (legacy fallback)
+      Returns the raw value array; shape normalisation (testCase.id vs workItem.id)
+      is the responsibility of the caller.
     #>
     param(
         [Parameter(Mandatory)][int]$PlanId,
@@ -86,8 +116,22 @@ function Get-AdoTestCases {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
-    $r = Invoke-AdoGet -Uri "$(Get-AdoBaseUrl $Org)/$Project/_apis/testplan/plans/$PlanId/suites/$SuiteId/testcase?api-version=$ApiV" -Headers $Headers
-    return $r.value
+    $base = "$(Get-AdoBaseUrl $Org)/$Project"
+    $urls = @(
+        "$base/_apis/test/plans/$PlanId/suites/$SuiteId/testcases?api-version=$ApiV",
+        "$base/_apis/testplan/Plans/$PlanId/Suites/$SuiteId/TestCase?api-version=$ApiV-preview.2",
+        "$base/_apis/testplan/Plans/$PlanId/Suites/$SuiteId/TestCase?api-version=$ApiV-preview.1",
+        "$base/_apis/testplan/Plans/$PlanId/Suites/$SuiteId/TestCases?api-version=$ApiV",
+        "$base/_apis/test/suites/$SuiteId/testcases?api-version=$ApiV"
+    )
+    foreach ($u in $urls) {
+        try {
+            $r = Invoke-AdoGet -Uri $u -Headers $Headers -MaxRetries 1
+            if ($r -and $r.value -and @($r.value).Count -gt 0) { return $r.value }
+        }
+        catch { continue }
+    }
+    return @()
 }
 
 #endregion
