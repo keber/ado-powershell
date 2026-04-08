@@ -13,5 +13,8 @@
   "engines": {
     "node": ">=16"
   },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "license": "MIT"
 }
