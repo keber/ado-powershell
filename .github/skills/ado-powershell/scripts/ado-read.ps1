@@ -1,12 +1,12 @@
 <#
 .DEPRECATED
   Functions in this file have been moved to domain-specific files:
-    ado-workitems.ps1  — projects, teams, work items, WIQL
-    ado-testing.ps1   — test plans, suites, test cases, test runs/results
-    ado-pipelines.ps1 — pipelines and pipeline runs
-    ado-git.ps1       — repositories, branches, iterations
+    ado-workitems.ps1  - projects, teams, work items, WIQL
+    ado-testing.ps1   - test plans, suites, test cases, test runs/results
+    ado-pipelines.ps1 - pipelines and pipeline runs
+    ado-git.ps1       - repositories, branches, iterations
 
-  Load the skill via load.ps1 — it sources the domain files automatically.
+  Load the skill via load.ps1 - it sources the domain files automatically.
   This file is kept for backward compatibility only and will be removed in a future version.
 
 .SYNOPSIS

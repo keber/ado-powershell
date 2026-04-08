@@ -172,7 +172,7 @@ function Resolve-AdoConfig {
     <#
     .SYNOPSIS
       Resolves connection settings from explicit parameters, environment variables,
-      and an optional JSON config file. Returns a plain hashtable — does NOT build
+      and an optional JSON config file. Returns a plain hashtable - does NOT build
       headers or create the session object.
 
     .DESCRIPTION
@@ -220,7 +220,7 @@ function Resolve-AdoConfig {
     }
 
     # Resolve each value: param > env > file
-    # Use bracket notation ($file['Key']) — dot notation throws with Set-StrictMode on empty hashtables
+    # Use bracket notation ($file['Key']) - dot notation throws with Set-StrictMode on empty hashtables
     $resolvedOrg  = if ($Org)                        { $Org }
                     elseif ($env:ADO_ORG)            { $env:ADO_ORG }
                     elseif ($file['Org'])            { $file['Org'] }

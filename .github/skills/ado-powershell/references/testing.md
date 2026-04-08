@@ -1,4 +1,4 @@
-# Testing Functions — Azure DevOps PowerShell Skill
+# Testing Functions - Azure DevOps PowerShell Skill
 
 Full parameter reference and examples for Test Plan, Test Suite, Test Case, Test Run, and Results operations.
 Load the skill before using: `. .github/skills/ado-powershell/load.ps1`
@@ -9,7 +9,7 @@ Load the skill before using: `. .github/skills/ado-powershell/load.ps1`
 
 ---
 
-## Test Plans — Read
+## Test Plans - Read
 
 ### `Get-AdoTestPlans`
 
@@ -32,7 +32,7 @@ $rootSuiteId = $plan.rootSuite.id   # needed as ParentSuiteId for top-level suit
 
 ---
 
-## Test Suites — Read
+## Test Suites - Read
 
 ### `Get-AdoTestSuites -PlanId <n>`
 
@@ -57,7 +57,7 @@ Get-AdoTestCases -PlanId 1001 -SuiteId 1002 |
 
 ---
 
-## Test Runs — Read
+## Test Runs - Read
 
 ### `Get-AdoTestRuns`
 
@@ -65,7 +65,7 @@ Lists recent Test Runs, optionally filtered by Test Plan.
 
 | Parameter | Required | Default | Notes |
 |-----------|----------|---------|-------|
-| `-PlanId` | | — | Filter to runs of a specific Test Plan |
+| `-PlanId` | | - | Filter to runs of a specific Test Plan |
 | `-Top` | | `50` | Max results |
 
 ```powershell
@@ -80,7 +80,7 @@ Returns the individual test results of a run.
 
 | Parameter | Required | Default | Notes |
 |-----------|----------|---------|-------|
-| `-RunId` | ✅ | — | — |
+| `-RunId` | ✅ | - | - |
 | `-Top` | | `200` | Max results |
 
 ```powershell
@@ -94,7 +94,7 @@ Get-AdoTestRunResults -RunId 456 | Group-Object outcome | Select-Object Name, Co
 
 ---
 
-## Test Plans — Write
+## Test Plans - Write
 
 ### `New-AdoTestPlan -Name <n> -AreaPath <a>`
 
@@ -102,7 +102,7 @@ Creates a new Test Plan and returns the created object (including `rootSuite.id`
 
 | Parameter | Required | Notes |
 |-----------|----------|-------|
-| `-Name` | ✅ | — |
+| `-Name` | ✅ | - |
 | `-AreaPath` | ✅ | e.g. `'MyProject'` or `'MyProject\QA'` |
 | `-IterationPath` | | e.g. `'MyProject\Sprint 5'` |
 | `-StartDate` | | ISO-8601: `'2025-01-01'` |
@@ -119,7 +119,7 @@ $plan.rootSuite.id    # root suite ID (needed for New-AdoTestSuite)
 
 ---
 
-## Test Suites — Write
+## Test Suites - Write
 
 ### `New-AdoTestSuite -PlanId <n> -Name <n> -ParentSuiteId <n>`
 
@@ -127,11 +127,11 @@ Creates a new Test Suite inside an existing Test Plan.
 
 | Parameter | Required | Default | Notes |
 |-----------|----------|---------|-------|
-| `-PlanId` | ✅ | — | — |
-| `-Name` | ✅ | — | — |
-| `-ParentSuiteId` | ✅ | — | Use `$plan.rootSuite.id` for top-level suites |
+| `-PlanId` | ✅ | - | - |
+| `-Name` | ✅ | - | - |
+| `-ParentSuiteId` | ✅ | - | Use `$plan.rootSuite.id` for top-level suites |
 | `-SuiteType` | | `staticTestSuite` | `staticTestSuite \| requirementTestSuite \| dynamicTestSuite` |
-| `-QueryString` | | — | WIQL query; only used when `SuiteType` is `dynamicTestSuite` |
+| `-QueryString` | | - | WIQL query; only used when `SuiteType` is `dynamicTestSuite` |
 
 ```powershell
 # Static suite at the root of plan 1001
@@ -147,7 +147,7 @@ New-AdoTestSuite -PlanId 1001 -Name 'High priority TCs' `
 
 ---
 
-## Test Cases — Write
+## Test Cases - Write
 
 ### `New-AdoTestCase -Title <t>`
 
@@ -155,15 +155,15 @@ Creates a Test Case work item with optional steps encoded in the ADO XML format.
 
 | Parameter | Required | Default | Notes |
 |-----------|----------|---------|-------|
-| `-Title` | ✅ | — | — |
-| `-Steps` | | — | `@('Action 1','Action 2',...)` — plain text per step |
-| `-Priority` | | — | `'1'` (Critical) `'2'` (High) `'3'` (Medium) `'4'` (Low) |
-| `-AssignedTo` | | — | Email or display name |
-| `-Description` | | — | HTML accepted |
-| `-Tags` | | — | Semicolon-separated |
-| `-State` | | — | `Design \| Ready \| Closed` |
-| `-AreaPath` | | — | — |
-| `-IterationPath` | | — | — |
+| `-Title` | ✅ | - | - |
+| `-Steps` | | - | `@('Action 1','Action 2',...)` - plain text per step |
+| `-Priority` | | - | `'1'` (Critical) `'2'` (High) `'3'` (Medium) `'4'` (Low) |
+| `-AssignedTo` | | - | Email or display name |
+| `-Description` | | - | HTML accepted |
+| `-Tags` | | - | Semicolon-separated |
+| `-State` | | - | `Design \| Ready \| Closed` |
+| `-AreaPath` | | - | - |
+| `-IterationPath` | | - | - |
 | `-ExtraFields` | | `@{}` | Any additional TCM or custom field |
 
 ```powershell
@@ -191,12 +191,12 @@ Adds one or more existing Test Case work items to a Suite.
 
 | Parameter | Required | Notes |
 |-----------|----------|-------|
-| `-PlanId` | ✅ | — |
-| `-SuiteId` | ✅ | — |
+| `-PlanId` | ✅ | - |
+| `-SuiteId` | ✅ | - |
 | `-TestCaseIds` | ✅ | `[int[]]` array of Test Case work item IDs |
 
 > ⚠️ **Always pass `-Confirm:$false` in scripts.** Without it, the default `$ConfirmPreference`
-> can silently suppress the API call — no error is raised, the TC is simply not added.
+> can silently suppress the API call - no error is raised, the TC is simply not added.
 
 ```powershell
 Add-AdoTestCaseToSuite -PlanId 1001 -SuiteId 1002 -TestCaseIds @(5010, 5011, 5012) -Confirm:$false
@@ -210,7 +210,7 @@ Add-AdoTestCaseToSuite -PlanId $plan.id -SuiteId $suite.id -TestCaseIds @($tc.id
 
 ---
 
-## Test Runs — Write
+## Test Runs - Write
 
 ### `New-AdoTestRun -Name <n> -PlanId <n>`
 
@@ -234,7 +234,7 @@ Each result is a hashtable with at minimum `testCaseTitle` and `outcome`:
 ```powershell
 $results = @(
     @{ testCaseTitle = 'Valid login';        outcome = 'Passed' },
-    @{ testCaseTitle = 'Login wrong password'; outcome = 'Failed'; errorMessage = 'HTTP 401 — Unauthorized' },
+    @{ testCaseTitle = 'Login wrong password'; outcome = 'Failed'; errorMessage = 'HTTP 401 - Unauthorized' },
     @{ testCaseTitle = 'Logout button';      outcome = 'NotExecuted' }
 )
 Update-AdoTestRunResults -RunId $run.id -Results $results

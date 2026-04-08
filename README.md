@@ -1,6 +1,6 @@
 # ado-powershell
 
-An AI agent skill that enables GitHub Copilot, Claude Code, and other compatible agents to interact with the **Azure DevOps REST API** using PowerShell — covering Work Items, Test Plans, Pipelines, Git repositories, and more.
+An AI agent skill that enables GitHub Copilot, Claude Code, and other compatible agents to interact with the **Azure DevOps REST API** using PowerShell - covering Work Items, Test Plans, Pipelines, Git repositories, and more.
 
 ---
 
@@ -64,7 +64,7 @@ All write functions support `-WhatIf` for dry-run simulation. Full parameter doc
 
 ```
 .github/skills/ado-powershell/
-  SKILL.md              # Agent entry point — quick-lookup index
+  SKILL.md              # Agent entry point - quick-lookup index
   load.ps1              # Single dot-source to load all functions
   scripts/
     ado-base.ps1        # Auth, session management, HTTP core

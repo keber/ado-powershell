@@ -1,4 +1,4 @@
-# Endpoint Reference — Azure DevOps REST API v7.1
+# Endpoint Reference - Azure DevOps REST API v7.1
 
 > Base URL: `https://dev.azure.com/{org}`  
 > Authentication: `Authorization: Basic base64(:PAT)`  
@@ -19,11 +19,11 @@
 
 | Operation | Method | Path | Content-Type |
 |-----------|--------|------|-------------|
-| Get WI by ID | GET | `/{project}/_apis/wit/workitems/{id}?$expand=All` | — |
+| Get WI by ID | GET | `/{project}/_apis/wit/workitems/{id}?$expand=All` | - |
 | Get WI (batch) | POST | `/{project}/_apis/wit/workitemsbatch` | `application/json` |
 | Run WIQL | POST | `/{project}/_apis/wit/wiql?$top=N` | `application/json` |
-| Get comments | GET | `/{project}/_apis/wit/workitems/{id}/comments` | — |
-| Get revisions | GET | `/{project}/_apis/wit/workitems/{id}/revisions` | — |
+| Get comments | GET | `/{project}/_apis/wit/workitems/{id}/comments` | - |
+| Get revisions | GET | `/{project}/_apis/wit/workitems/{id}/revisions` | - |
 | **Create WI** | POST | `/{project}/_apis/wit/workitems/${type}` | `application/json-patch+json` |
 | **Update WI** | PATCH | `/{project}/_apis/wit/workitems/{id}` | `application/json-patch+json` |
 | **Add comment** | POST | `/{project}/_apis/wit/workitems/{id}/comments` (`7.1-preview.3`) | `application/json` |
@@ -100,6 +100,6 @@ Write operations on Work Items use the [RFC 6902 JSON Patch](https://tools.ietf.
 ]
 ```
 
-- `add` — for new fields or relations.
-- `replace` — for fields that already exist on the Work Item.
-- `remove` — to delete a field or relation (use `path` with index for relations).
+- `add` - for new fields or relations.
+- `replace` - for fields that already exist on the Work Item.
+- `remove` - to delete a field or relation (use `path` with index for relations).

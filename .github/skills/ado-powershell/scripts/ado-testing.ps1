@@ -13,7 +13,7 @@
   Write functions implement [CmdletBinding(SupportsShouldProcess)].
   Use -WhatIf to simulate. Use -Confirm:$false to skip prompts in scripts.
   IMPORTANT: Always pass -Confirm:$false to Add-AdoTestCaseToSuite inside
-  scripts — the default ConfirmPreference can silently suppress the API call.
+  scripts - the default ConfirmPreference can silently suppress the API call.
 
 .USAGE
   . "$PSScriptRoot/ado-base.ps1"

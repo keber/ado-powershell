@@ -1,11 +1,11 @@
-# Pipeline Functions — Azure DevOps PowerShell Skill
+# Pipeline Functions - Azure DevOps PowerShell Skill
 
 Full parameter reference and examples for Pipeline (CI/CD) operations.
 Load the skill before using: `. .github/skills/ado-powershell/load.ps1`
 
 ---
 
-## Pipelines — Read
+## Pipelines - Read
 
 ### `Get-AdoPipelines`
 
@@ -27,13 +27,13 @@ Returns recent runs of a pipeline with optional filters.
 
 | Parameter | Required | Default | Notes |
 |-----------|----------|---------|-------|
-| `-PipelineId` | ✅ | — | — |
+| `-PipelineId` | ✅ | - | - |
 | `-Top` | | `10` | Max results |
-| `-Branch` | | — | e.g. `'main'` or `'refs/heads/feature/x'` |
-| `-State` | | — | `notStarted \| inProgress \| completed` |
-| `-Result` | | — | `succeeded \| failed \| canceled \| partiallySucceeded` |
-| `-CreatedFrom` | | — | ISO-8601 lower bound, e.g. `'2025-01-01'` |
-| `-CreatedTo` | | — | ISO-8601 upper bound, e.g. `'2025-01-31'` |
+| `-Branch` | | - | e.g. `'main'` or `'refs/heads/feature/x'` |
+| `-State` | | - | `notStarted \| inProgress \| completed` |
+| `-Result` | | - | `succeeded \| failed \| canceled \| partiallySucceeded` |
+| `-CreatedFrom` | | - | ISO-8601 lower bound, e.g. `'2025-01-01'` |
+| `-CreatedTo` | | - | ISO-8601 upper bound, e.g. `'2025-01-31'` |
 
 ```powershell
 # Last 5 runs on main
@@ -48,7 +48,7 @@ Get-AdoPipelineRuns -PipelineId 12 -Top 20 -Result 'failed' -CreatedFrom '2025-0
 
 ---
 
-## Pipelines — Trigger
+## Pipelines - Trigger
 
 ### `Invoke-AdoPipelineRun -PipelineId <n>`
 
@@ -56,7 +56,7 @@ Triggers a new pipeline run and returns the created run object.
 
 | Parameter | Required | Default | Notes |
 |-----------|----------|---------|-------|
-| `-PipelineId` | ✅ | — | — |
+| `-PipelineId` | ✅ | - | - |
 | `-Branch` | | pipeline default | Branch to run on. `'main'`, `'feature/x'`, `'refs/heads/...'` all accepted |
 | `-Variables` | | `@{}` | Runtime variables. Each key: `@{ value='...'; isSecret=$false }` |
 | `-TemplateParameters` | | `@{}` | YAML template parameter overrides as a flat hashtable |
@@ -88,7 +88,7 @@ Invoke-AdoPipelineRun -PipelineId 4 -Branch 'main' -WhatIf
 
 | Field | Description |
 |-------|-------------|
-| `id` | Run ID — use with `Get-AdoPipelineRuns` to poll for status |
+| `id` | Run ID - use with `Get-AdoPipelineRuns` to poll for status |
 | `state` | `inProgress \| completed \| notStarted` |
 | `result` | `succeeded \| failed \| canceled` (only when `state = completed`) |
 | `_links.web.href` | Direct browser URL to the run |

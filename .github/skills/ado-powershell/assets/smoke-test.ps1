@@ -61,7 +61,7 @@ Write-Host "`n---------------------------------------" -ForegroundColor Cyan
 Write-Host "  ADO PowerShell Skill - Smoke Test" -ForegroundColor Cyan
 Write-Host "---------------------------------------" -ForegroundColor Cyan
 
-# Initialize session — Resolve-AdoConfig inside will throw if required values are missing
+# Initialize session - Resolve-AdoConfig inside will throw if required values are missing
 try {
     $initArgs = @{}
     if ($Org)        { $initArgs.Org        = $Org        }

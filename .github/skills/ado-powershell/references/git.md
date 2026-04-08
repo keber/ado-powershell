@@ -1,4 +1,4 @@
-# Git and Iteration Functions — Azure DevOps PowerShell Skill
+# Git and Iteration Functions - Azure DevOps PowerShell Skill
 
 Full parameter reference and examples for Git Repository, Branch, and Iteration (sprint) operations.
 Load the skill before using: `. .github/skills/ado-powershell/load.ps1`

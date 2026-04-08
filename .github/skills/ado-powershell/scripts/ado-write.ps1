@@ -1,10 +1,10 @@
 <#
 .DEPRECATED
   Functions in this file have been moved to domain-specific files:
-    ado-workitems.ps1  — New-AdoWorkItem, Update-AdoWorkItem, Add-AdoWorkItemComment, Add-AdoWorkItemLink, Add-AdoWorkItemAttachment
-    ado-testing.ps1   — New-AdoTestRun, Update-AdoTestRunResults, New-AdoTestPlan, New-AdoTestSuite, New-AdoTestCase, Add-AdoTestCaseToSuite
+    ado-workitems.ps1  - New-AdoWorkItem, Update-AdoWorkItem, Add-AdoWorkItemComment, Add-AdoWorkItemLink, Add-AdoWorkItemAttachment
+    ado-testing.ps1   - New-AdoTestRun, Update-AdoTestRunResults, New-AdoTestPlan, New-AdoTestSuite, New-AdoTestCase, Add-AdoTestCaseToSuite
 
-  Load the skill via load.ps1 — it sources the domain files automatically.
+  Load the skill via load.ps1 - it sources the domain files automatically.
   This file is kept for backward compatibility only and will be removed in a future version.
 
 .SYNOPSIS
@@ -440,7 +440,7 @@ function New-AdoTestCase {
             -Priority '2' -AssignedTo 'qa@contoso.com' -Tags 'login; smoke'
 
     .EXAMPLE
-        # WhatIf — no changes applied
+        # WhatIf - no changes applied
         New-AdoTestCase -Title 'Draft test' -WhatIf
     #>
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact='Low')]

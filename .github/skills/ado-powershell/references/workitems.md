@@ -1,4 +1,4 @@
-# Work Item Functions — Azure DevOps PowerShell Skill
+# Work Item Functions - Azure DevOps PowerShell Skill
 
 Full parameter reference and examples for Work Item, Project, and Team operations.
 Load the skill before using: `. .github/skills/ado-powershell/load.ps1`
@@ -19,7 +19,7 @@ Get-AdoTeams    | Select-Object name, description | Format-Table -AutoSize
 
 ---
 
-## Work Items — Read
+## Work Items - Read
 
 ### `Get-AdoWorkItem -Id <n>`
 
@@ -27,7 +27,7 @@ Returns a single Work Item with all fields, relations, and links.
 
 | Parameter | Required | Default | Notes |
 |-----------|----------|---------|-------|
-| `-Id` | ✅ | — | Work Item ID (int) |
+| `-Id` | ✅ | - | Work Item ID (int) |
 | `-Expand` | | `All` | `None \| Relations \| Fields \| Links \| All` |
 
 ```powershell
@@ -46,7 +46,7 @@ Fetches up to 200 Work Items in a single call.
 
 | Parameter | Required | Default | Notes |
 |-----------|----------|---------|-------|
-| `-Ids` | ✅ | — | `[int[]]` array, max 200 |
+| `-Ids` | ✅ | - | `[int[]]` array, max 200 |
 | `-Fields` | | all fields | `@('System.Title','System.State',...)` to limit payload |
 | `-Expand` | | `All` | Same values as `Get-AdoWorkItem` |
 
@@ -65,7 +65,7 @@ Executes a WIQL query and returns Work Items with their fields.
 
 | Parameter | Required | Default | Notes |
 |-----------|----------|---------|-------|
-| `-Query` | ✅ | — | Full WIQL SELECT statement |
+| `-Query` | ✅ | - | Full WIQL SELECT statement |
 | `-Top` | | `100` | Max results |
 
 ```powershell
@@ -114,7 +114,7 @@ Get-AdoWorkItemRevisions -Id 1234 |
 
 ---
 
-## Work Items — Write
+## Work Items - Write
 
 All write functions support `-WhatIf` (simulate) and `-Confirm:$false` (skip prompt in scripts).
 
@@ -125,7 +125,7 @@ Creates a new Work Item of the given type.
 | Parameter | Required | Notes |
 |-----------|----------|-------|
 | `-Type` | ✅ | `Task \| Bug \| User Story \| Feature \| Epic \| Issue \| Test Case` ... |
-| `-Title` | ✅ | — |
+| `-Title` | ✅ | - |
 | `-Description` | | HTML supported |
 | `-AssignedTo` | | Email or display name |
 | `-AreaPath` | | Defaults to project root |
@@ -155,14 +155,14 @@ Updates one or more fields.
 
 | Parameter | Required | Notes |
 |-----------|----------|-------|
-| `-Id` | ✅ | — |
-| `-Title` | | — |
-| `-Description` | | — |
-| `-State` | | — |
-| `-AssignedTo` | | — |
-| `-AreaPath` | | — |
-| `-IterationPath` | | — |
-| `-Tags` | | — |
+| `-Id` | ✅ | - |
+| `-Title` | | - |
+| `-Description` | | - |
+| `-State` | | - |
+| `-AssignedTo` | | - |
+| `-AreaPath` | | - |
+| `-IterationPath` | | - |
+| `-Tags` | | - |
 | `-ExtraFields` | | Any field as hashtable |
 
 ```powershell
@@ -179,7 +179,7 @@ Adds a text or HTML comment to a Work Item.
 
 ```powershell
 Add-AdoWorkItemComment -Id 1234 -Text 'Reviewed and approved in UAT.'
-Add-AdoWorkItemComment -Id 1234 -Text '<b>Blocked</b> — waiting for environment access.'
+Add-AdoWorkItemComment -Id 1234 -Text '<b>Blocked</b> - waiting for environment access.'
 ```
 
 ---
@@ -190,8 +190,8 @@ Creates a typed link between two Work Items.
 
 | Parameter | Required | Notes |
 |-----------|----------|-------|
-| `-SourceId` | ✅ | — |
-| `-TargetId` | ✅ | — |
+| `-SourceId` | ✅ | - |
+| `-TargetId` | ✅ | - |
 | `-LinkType` | ✅ | See table below |
 | `-Comment` | | Optional description for the link |
 
@@ -220,7 +220,7 @@ Uploads a local file and attaches it to a Work Item.
 
 | Parameter | Required | Notes |
 |-----------|----------|-------|
-| `-Id` | ✅ | — |
+| `-Id` | ✅ | - |
 | `-FilePath` | ✅ | Absolute path to the local file |
 | `-Comment` | | Label shown in the attachment list |
 
