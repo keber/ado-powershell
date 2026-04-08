@@ -1,8 +1,14 @@
 {
   "name": "@keber/ado-powershell",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Azure DevOps PowerShell skill for GitHub Copilot, Claude Code, and other AI agents.",
-  "keywords": ["ado", "azure-devops", "powershell", "copilot-skill", "agent-skill"],
+  "keywords": [
+    "ado",
+    "azure-devops",
+    "powershell",
+    "copilot-skill",
+    "agent-skill"
+  ],
   "bin": {
     "adops": "bin/cli.js"
   },
