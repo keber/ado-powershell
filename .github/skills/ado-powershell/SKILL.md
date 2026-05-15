@@ -105,7 +105,7 @@ Pass them explicitly to override on a per-call basis.
 | `Get-AdoTestRunResults -RunId <n>` | Results of a Test Run |
 | `New-AdoTestPlan -Name <n> -AreaPath <a>` | 🔴 Create Test Plan |
 | `New-AdoTestSuite -PlanId <n> -Name <n> -ParentSuiteId <n>` | 🔴 Create Test Suite |
-| `New-AdoTestCase -Title <t>` | 🔴 Create Test Case (with optional `-Steps @(...)`) |
+| `New-AdoTestCase -Title <t>` | 🔴 Create Test Case (optional `-Steps @(...)` `-ExpectedResult <text>`; last step becomes ValidateStep) |
 | `Add-AdoTestCaseToSuite -PlanId <n> -SuiteId <n> -TestCaseIds @(...)` | 🔴 Link TC(s) to Suite - always pass `-Confirm:$false` in scripts |
 | `New-AdoTestRun -Name <n> -PlanId <n>` | 🔴 Create Test Run |
 | `Update-AdoTestRunResults -RunId <n> -Results @(...)` | 🔴 Publish results |

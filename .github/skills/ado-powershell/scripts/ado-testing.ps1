@@ -341,12 +341,16 @@ function New-AdoTestCase {
     .PARAMETER Title        Title of the Test Case (mandatory).
     .PARAMETER Steps        Ordered array of plain-text action strings.
                             Encoded as the XML format required by Microsoft.VSTS.TCM.Steps.
+                            All steps are ActionStep except the last, which becomes a ValidateStep.
+    .PARAMETER ExpectedResult Plain-text expected result applied to the last step (ValidateStep).
+                              Ignored when Steps is empty.
     .PARAMETER Priority     1 (Critical) | 2 (High) | 3 (Medium) | 4 (Low).
     .PARAMETER ExtraFields  Hashtable of additional TCM or custom fields.
 
     .EXAMPLE
         New-AdoTestCase -Title 'Verify login with valid credentials' `
             -Steps @('Navigate to /login', 'Enter username and password', 'Click Sign In') `
+            -ExpectedResult 'User is redirected to the dashboard' `
             -Priority '2' -AssignedTo 'qa@contoso.com' -Tags 'login; smoke'
     #>
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact='Low')]
@@ -360,6 +364,7 @@ function New-AdoTestCase {
         [ValidateSet('Design','Ready','Closed')]
         [string]$State,
         [string[]]$Steps,
+        [string]$ExpectedResult,
         [ValidateSet('1','2','3','4')]
         [string]$Priority,
         [hashtable]$ExtraFields = @{},
@@ -380,7 +385,12 @@ function New-AdoTestCase {
         $stepIndex  = 1
         foreach ($action in $Steps) {
             $escaped  = [System.Security.SecurityElement]::Escape($action)
-            $stepsXml += '<step id="{0}" type="ActionStep"><parameterizedString isformatted="true">{1}</parameterizedString><parameterizedString isformatted="true"/></step>' -f $stepIndex, $escaped
+            $isLastStep = ($stepIndex -eq $Steps.Count)
+            $stepType   = if ($isLastStep) { 'ValidateStep' } else { 'ActionStep' }
+            $expected   = if ($isLastStep -and $ExpectedResult) {
+                [System.Security.SecurityElement]::Escape($ExpectedResult)
+            } else { '' }
+            $stepsXml += '<step id="{0}" type="{1}"><parameterizedString isformatted="true">{2}</parameterizedString><parameterizedString isformatted="true">{3}</parameterizedString><description/></step>' -f $stepIndex, $stepType, $escaped, $expected
             $stepIndex++
         }
         $stepsXml += '</steps>'

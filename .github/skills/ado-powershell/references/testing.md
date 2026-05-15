@@ -156,7 +156,8 @@ Creates a Test Case work item with optional steps encoded in the ADO XML format.
 | Parameter | Required | Default | Notes |
 |-----------|----------|---------|-------|
 | `-Title` | ✅ | - | - |
-| `-Steps` | | - | `@('Action 1','Action 2',...)` - plain text per step |
+| `-Steps` | | - | `@('Action 1','Action 2',...)` - plain text per step; last step becomes `ValidateStep` |
+| `-ExpectedResult` | | - | Plain-text expected result for the last step (ValidateStep); ignored if `-Steps` is empty |
 | `-Priority` | | - | `'1'` (Critical) `'2'` (High) `'3'` (Medium) `'4'` (Low) |
 | `-AssignedTo` | | - | Email or display name |
 | `-Description` | | - | HTML accepted |
@@ -172,9 +173,9 @@ $tc = New-AdoTestCase -Title 'Verify login with valid credentials' `
     -Steps @(
         'Navigate to /login',
         'Enter valid username and password',
-        'Click Sign In',
-        'Verify redirect to dashboard'
+        'Click Sign In'
     ) `
+    -ExpectedResult 'User is redirected to the dashboard' `
     -Priority '2' -AssignedTo 'qa@contoso.com' -Tags 'login; smoke'
 
 $tc.id   # Work Item ID to use with Add-AdoTestCaseToSuite
