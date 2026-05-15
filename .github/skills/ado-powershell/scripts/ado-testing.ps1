@@ -225,7 +225,7 @@ function Update-AdoTestRunResults {
 
     if (-not $PSCmdlet.ShouldProcess($uri, "POST - $($Results.Count) results in Run #$RunId")) { return $null }
 
-    return Invoke-AdoRequest -Method POST -Uri $uri -Body ($Results | ConvertTo-Json -Depth 6) -Headers $Headers
+    return Invoke-AdoRequest -Method POST -Uri $uri -Body (ConvertTo-Json -InputObject @($Results) -Depth 6) -Headers $Headers
 }
 
 #endregion
@@ -448,7 +448,7 @@ function Add-AdoTestCaseToSuite {
         return $null
     }
 
-    $r = Invoke-AdoRequest -Method POST -Uri $uri -Body $($body | ConvertTo-Json -Depth 5) -Headers $Headers
+    $r = Invoke-AdoRequest -Method POST -Uri $uri -Body (ConvertTo-Json -InputObject @($body) -Depth 5) -Headers $Headers
     Write-Host "(ok) $($TestCaseIds.Count) Test Case(s) added to Suite $SuiteId (Plan $($PlanId))" -ForegroundColor Green
     return $r
 }

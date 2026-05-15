@@ -110,6 +110,17 @@ function Invoke-AdoRequest {
                 throw $msg
             }
 
+            # 400: bad request - do not retry, include response body for diagnosis
+            if ($status -eq 400) {
+                $body400 = ''
+                try {
+                    $stream400 = $_.Exception.Response.GetResponseStream()
+                    $reader400 = [System.IO.StreamReader]::new($stream400)
+                    $body400   = $reader400.ReadToEnd()
+                } catch { }
+                throw "400 Bad Request - $Uri`n$body400"
+            }
+
             # 404: do not retry - resource does not exist
             if ($status -eq 404) {
                 throw "404 Not Found - resource not found: $Uri"

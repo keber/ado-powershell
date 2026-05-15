@@ -81,7 +81,7 @@ function New-AdoWorkItem {
 
     if (-not $PSCmdlet.ShouldProcess($uri, "POST - Create ${Type}: '$Title'")) { return $null }
 
-    $r = Invoke-AdoRequest -Method POST -Uri $uri -Body ($ops | ConvertTo-Json -Depth 5) `
+    $r = Invoke-AdoRequest -Method POST -Uri $uri -Body (ConvertTo-Json -InputObject @($ops) -Depth 5) `
         -ContentType 'application/json-patch+json' -Headers $Headers
     Write-Host "(ok) Work Item created - ID: $($r.id)" -ForegroundColor Green
     return $r
@@ -133,7 +133,7 @@ function Update-AdoWorkItem {
 
     if (-not $PSCmdlet.ShouldProcess($uri, "PATCH - Update WI #$Id")) { return $null }
 
-    $r = Invoke-AdoRequest -Method PATCH -Uri $uri -Body ($ops | ConvertTo-Json -Depth 5) `
+    $r = Invoke-AdoRequest -Method PATCH -Uri $uri -Body (ConvertTo-Json -InputObject @($ops) -Depth 5) `
         -ContentType 'application/json-patch+json' -Headers $Headers
     Write-Host "(ok) Work Item updated - ID: $($r.id)" -ForegroundColor Green
     return $r
@@ -205,7 +205,7 @@ function Add-AdoWorkItemLink {
 
     if (-not $PSCmdlet.ShouldProcess($uri, "PATCH - Link #$SourceId -> #$TargetId [$LinkType]")) { return $null }
 
-    $r = Invoke-AdoRequest -Method PATCH -Uri $uri -Body ($ops | ConvertTo-Json -Depth 6) `
+    $r = Invoke-AdoRequest -Method PATCH -Uri $uri -Body (ConvertTo-Json -InputObject @($ops) -Depth 6) `
         -ContentType 'application/json-patch+json' -Headers $Headers
     Write-Host "(ok) Link created: #$SourceId -> #$TargetId [$LinkType]" -ForegroundColor Green
     return $r
@@ -254,7 +254,7 @@ function Add-AdoWorkItemAttachment {
         }
     })
     $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/workitems/$Id`?api-version=$ApiV"
-    $r = Invoke-AdoRequest -Method PATCH -Uri $uri -Body ($ops | ConvertTo-Json -Depth 6) `
+    $r = Invoke-AdoRequest -Method PATCH -Uri $uri -Body (ConvertTo-Json -InputObject @($ops) -Depth 6) `
         -ContentType 'application/json-patch+json' -Headers $Headers
     Write-Host "(ok) '$fileName' attached to WI #$Id" -ForegroundColor Green
     return $r
@@ -313,7 +313,7 @@ function Update-AdoTestRunResults {
 
     if (-not $PSCmdlet.ShouldProcess($uri, "POST - $($Results.Count) results in Run #$RunId")) { return $null }
 
-    return Invoke-AdoRequest -Method POST -Uri $uri -Body ($Results | ConvertTo-Json -Depth 6) -Headers $Headers
+    return Invoke-AdoRequest -Method POST -Uri $uri -Body (ConvertTo-Json -InputObject @($Results) -Depth 6) -Headers $Headers
 }
 
 #endregion
