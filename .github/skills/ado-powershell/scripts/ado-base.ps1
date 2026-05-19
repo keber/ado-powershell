@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   Base authentication and HTTP pattern for the Azure DevOps PowerShell Skill.
-  Dot-source this file before using ado-read.ps1 or ado-write.ps1.
+  Dot-source this file before using ado-workitems.ps1, ado-testing.ps1, ado-pipelines.ps1, or ado-git.ps1.
 
 .USAGE
   . "$PSScriptRoot/ado-base.ps1"

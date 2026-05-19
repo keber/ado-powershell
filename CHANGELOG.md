@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.0] - 2026-05-19
+
+### Removed
+- `ado-read.ps1` and `ado-write.ps1`: deprecated compatibility shims deleted. All functions were already available in the domain-specific files (`ado-workitems.ps1`, `ado-testing.ps1`, `ado-pipelines.ps1`, `ado-git.ps1`) since 1.2.0. If you were dot-sourcing either file directly, switch to the domain files or use `load.ps1`.
+
+### Fixed
+- `Add-AdoTestCaseToSuite` in `ado-write.ps1` (now removed): the `ConvertTo-Json` pipeline bug fix applied in 1.3.1 had been missed in the deprecated copy of the function. Backported before removal.
+
+---
+
 ## [1.3.1] - 2026-05-15
 
 ### Fixed
