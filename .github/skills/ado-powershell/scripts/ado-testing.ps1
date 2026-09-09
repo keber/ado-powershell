@@ -332,6 +332,81 @@ function New-AdoTestSuite {
 
 #region -- Test Cases: Write --
 
+function Update-AdoTestSuite {
+    <#
+    .SYNOPSIS  Renames an existing Test Suite.
+
+    .DESCRIPTION
+      PATCHes the suite through the Test Plan API. The body is sent as explicit UTF-8 bytes with
+      a charset on the Content-Type: suite names routinely carry accented characters, and letting
+      the default encoding decide corrupts them.
+
+    .PARAMETER PlanId   Test Plan that owns the suite.
+    .PARAMETER SuiteId  Suite to rename.
+    .PARAMETER Name     New suite name.
+
+    .EXAMPLE  Update-AdoTestSuite -PlanId 25467 -SuiteId 38410 -Name 'Gestion de Pallets'
+    .EXAMPLE  Update-AdoTestSuite -PlanId 25467 -SuiteId 38410 -Name 'Nuevo nombre' -WhatIf
+    #>
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact='Medium')]
+    param(
+        [Parameter(Mandatory)][int]$PlanId,
+        [Parameter(Mandatory)][int]$SuiteId,
+        [Parameter(Mandatory)][string]$Name,
+        [string]$Org     = $script:AdoSession.Org,
+        [string]$Project = $script:AdoSession.Project,
+        [string]$ApiV    = $script:AdoSession.ApiV,
+        [hashtable]$Headers = $script:AdoSession.Headers
+    )
+    $uri  = "$(Get-AdoBaseUrl $Org)/$Project/_apis/testplan/plans/$PlanId/suites/$SuiteId`?api-version=$ApiV"
+    $body = @{ name = $Name } | ConvertTo-Json -Depth 3
+
+    if (-not $PSCmdlet.ShouldProcess($uri, "PATCH - Rename Suite #$SuiteId to '$Name'")) { return $null }
+
+    $r = Invoke-AdoRequest -Method PATCH -Uri $uri -Body $body `
+        -ContentType 'application/json; charset=utf-8' -Headers $Headers
+    Write-Host "(ok) Suite #$SuiteId renamed to '$Name'" -ForegroundColor Green
+    return $r
+}
+
+function Remove-AdoTestCaseFromSuite {
+    <#
+    .SYNOPSIS  Removes a Test Case from a Test Suite.
+
+    .DESCRIPTION
+      Uses the legacy Test Management route (/_apis/test/..., api-version 5.0) rather than the
+      current /_apis/testplan/... one. This is deliberate: the newer route answers DELETE for this
+      operation with HTTP 405 Method Not Allowed. Confirmed empirically 2026-07-14.
+
+      Removing a Test Case from a suite does not delete the Test Case work item; it only detaches
+      it from that suite.
+
+    .PARAMETER PlanId      Test Plan that owns the suite.
+    .PARAMETER SuiteId     Suite to remove the Test Case from.
+    .PARAMETER TestCaseId  Test Case work item id.
+
+    .EXAMPLE  Remove-AdoTestCaseFromSuite -PlanId 25467 -SuiteId 38410 -TestCaseId 31022
+    .EXAMPLE  Remove-AdoTestCaseFromSuite -PlanId 25467 -SuiteId 38410 -TestCaseId 31022 -WhatIf
+    #>
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact='High')]
+    param(
+        [Parameter(Mandatory)][int]$PlanId,
+        [Parameter(Mandatory)][int]$SuiteId,
+        [Parameter(Mandatory)][int]$TestCaseId,
+        [string]$Org     = $script:AdoSession.Org,
+        [string]$Project = $script:AdoSession.Project,
+        [hashtable]$Headers = $script:AdoSession.Headers
+    )
+    # api-version is pinned to 5.0: this operation exists only on the legacy Test Management API.
+    $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/test/plans/$PlanId/suites/$SuiteId/testcases/$TestCaseId`?api-version=5.0"
+
+    if (-not $PSCmdlet.ShouldProcess($uri, "DELETE - Remove TC #$TestCaseId from Suite #$SuiteId")) { return $null }
+
+    $r = Invoke-AdoRequest -Method DELETE -Uri $uri -Headers $Headers
+    Write-Host "(ok) Test Case #$TestCaseId removed from Suite #$SuiteId (Plan #$PlanId)" -ForegroundColor Green
+    return $r
+}
+
 function New-AdoTestCase {
     <#
     .SYNOPSIS

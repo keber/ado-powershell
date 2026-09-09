@@ -21,6 +21,11 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# Session cache for Get-AdoWorkItemTypeFields. Declared here rather than initialised lazily
+# inside the function: under Set-StrictMode, reading a script variable that was never assigned
+# throws instead of yielding $null, so an in-function existence check never runs.
+$script:AdoWorkItemTypeFieldCache = @{}
+
 #region -- Projects and Teams --
 
 function Get-AdoProjects {
@@ -144,6 +149,49 @@ function Get-AdoWorkItemRevisions {
     )
     $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/workitems/$Id/revisions?api-version=$ApiV"
     $r   = Invoke-AdoGet -Uri $uri -Headers $Headers
+    return $r.value
+}
+
+function Get-AdoWorkItemTypeFields {
+    <#
+    .SYNOPSIS  Returns the field definitions for a Work Item type, including default values.
+
+    .DESCRIPTION
+      Answers what a type's fields are called and what ADO pre-fills them with. The default value
+      matters when deciding whether a field was actually filled in: a template default is not the
+      same as user-authored content, but both are non-empty. Results are cached per type for the
+      session, since type definitions do not change during a run.
+
+    .PARAMETER Type   Work Item type name, e.g. 'User Story'. Spaces are escaped automatically.
+    .PARAMETER Force  Bypass the session cache and re-query.
+
+    .EXAMPLE
+      Get-AdoWorkItemTypeFields -Type 'User Story' |
+          Where-Object referenceName -eq 'Microsoft.VSTS.Common.AcceptanceCriteria'
+    .EXAMPLE
+      # Tell "not filled in" apart from "left as the template default"
+      $def = (Get-AdoWorkItemTypeFields -Type $t |
+              Where-Object referenceName -eq 'Microsoft.VSTS.Common.AcceptanceCriteria').defaultValue
+      $ac  = Get-AdoFieldValue -WorkItem $wi -Name 'Microsoft.VSTS.Common.AcceptanceCriteria'
+      $isTemplate = ($ac -eq $def)
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Type,
+        [switch]$Force,
+        [string]$Org     = $script:AdoSession.Org,
+        [string]$Project = $script:AdoSession.Project,
+        [string]$ApiV    = $script:AdoSession.ApiV,
+        [hashtable]$Headers = $script:AdoSession.Headers
+    )
+    $cacheKey = "$Org/$Project/$Type"
+    if (-not $Force -and $script:AdoWorkItemTypeFieldCache.ContainsKey($cacheKey)) {
+        return $script:AdoWorkItemTypeFieldCache[$cacheKey]
+    }
+
+    $typeEncoded = [Uri]::EscapeDataString($Type)
+    $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/workitemtypes/$typeEncoded/fields?api-version=$ApiV"
+    $r   = Invoke-AdoGet -Uri $uri -Headers $Headers
+    $script:AdoWorkItemTypeFieldCache[$cacheKey] = $r.value
     return $r.value
 }
 
@@ -310,6 +358,135 @@ function Add-AdoWorkItemComment {
 #endregion
 
 #region -- Work Items: Links --
+
+function Get-AdoIdFromUrl {
+    <#
+    .SYNOPSIS  Extracts a Work Item id from an ADO relation URL.
+    .DESCRIPTION
+      Relations reference their target by URL, not by id. Splitting on '/' breaks when the URL
+      carries a query string, so match the id explicitly.
+    .OUTPUTS  [int], or $null when the URL is not a Work Item URL.
+    .EXAMPLE  Get-AdoIdFromUrl -Url $rel.url
+    #>
+    param(
+        [Parameter(Mandatory, Position = 0)]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Url
+    )
+    if ([string]::IsNullOrWhiteSpace($Url)) { return $null }
+    if ($Url -match '(?i)/workitems/(\d+)(\?|$)') { return [int]$Matches[1] }
+    return $null
+}
+
+function Get-AdoWorkItemParent {
+    <#
+    .SYNOPSIS  Returns the parent of a Work Item, or $null when it has none.
+
+    .DESCRIPTION
+      Walks 'System.LinkTypes.Hierarchy-Reverse'. Accepts either an id (fetched here) or an
+      already-fetched Work Item, so callers that hold the object avoid a second round trip.
+      The Work Item must have been fetched with relations - the default -Expand All does.
+
+    .PARAMETER Id        Work Item id to fetch and inspect.
+    .PARAMETER WorkItem  An already-fetched Work Item to inspect.
+    .PARAMETER IdOnly    Return just the parent id instead of the full Work Item.
+
+    .EXAMPLE  $parent = Get-AdoWorkItemParent -Id 20071
+    .EXAMPLE  $parentId = Get-AdoWorkItemParent -WorkItem $wi -IdOnly
+    #>
+    [CmdletBinding(DefaultParameterSetName = 'ById')]
+    param(
+        [Parameter(Mandatory, ParameterSetName = 'ById', Position = 0)]
+        [int]$Id,
+
+        [Parameter(Mandatory, ParameterSetName = 'ByObject')]
+        [AllowNull()]
+        [object]$WorkItem,
+
+        [switch]$IdOnly,
+        [string]$Org     = $script:AdoSession.Org,
+        [string]$Project = $script:AdoSession.Project,
+        [string]$ApiV    = $script:AdoSession.ApiV,
+        [hashtable]$Headers = $script:AdoSession.Headers
+    )
+    $wi = if ($PSCmdlet.ParameterSetName -eq 'ById') {
+        Get-AdoWorkItem -Id $Id -Org $Org -Project $Project -ApiV $ApiV -Headers $Headers
+    } else {
+        $WorkItem
+    }
+    if ($null -eq $wi) { return $null }
+
+    $relsProp = $wi.PSObject.Properties['relations']
+    if (-not $relsProp -or $null -eq $relsProp.Value) { return $null }
+
+    foreach ($r in @($relsProp.Value)) {
+        if ($null -eq $r) { continue }
+        if ($r.rel -ne 'System.LinkTypes.Hierarchy-Reverse') { continue }
+
+        $parentId = Get-AdoIdFromUrl -Url $r.url
+        if ($null -eq $parentId) { continue }
+        if ($IdOnly) { return $parentId }
+        return Get-AdoWorkItem -Id $parentId -Org $Org -Project $Project -ApiV $ApiV -Headers $Headers
+    }
+    return $null
+}
+
+function Test-AdoWorkItemLink {
+    <#
+    .SYNOPSIS  Tells whether a link of a given type already exists between two Work Items.
+
+    .DESCRIPTION
+      ADO accepts a duplicate relation without complaint, so a re-run of a linking script silently
+      accumulates identical links. Check before adding.
+
+      Comparison is on the target id parsed out of each relation URL, not on the URL string:
+      the same Work Item can be referenced through different host or organisation spellings.
+
+    .PARAMETER SourceId  Work Item whose relations are inspected.
+    .PARAMETER WorkItem  An already-fetched source Work Item, as an alternative to -SourceId.
+    .PARAMETER TargetId  Work Item the link should point at.
+    .PARAMETER LinkType  Relation reference name, e.g. 'System.LinkTypes.Related'.
+
+    .EXAMPLE
+      if (-not (Test-AdoWorkItemLink -SourceId 1001 -TargetId 1050 -LinkType 'System.LinkTypes.Related')) {
+          Add-AdoWorkItemLink -SourceId 1001 -TargetId 1050 -LinkType 'System.LinkTypes.Related'
+      }
+    #>
+    [CmdletBinding(DefaultParameterSetName = 'ById')]
+    param(
+        [Parameter(Mandatory, ParameterSetName = 'ById', Position = 0)]
+        [int]$SourceId,
+
+        [Parameter(Mandatory, ParameterSetName = 'ByObject')]
+        [AllowNull()]
+        [object]$WorkItem,
+
+        [Parameter(Mandatory)][int]$TargetId,
+        [Parameter(Mandatory)][string]$LinkType,
+
+        [string]$Org     = $script:AdoSession.Org,
+        [string]$Project = $script:AdoSession.Project,
+        [string]$ApiV    = $script:AdoSession.ApiV,
+        [hashtable]$Headers = $script:AdoSession.Headers
+    )
+    $wi = if ($PSCmdlet.ParameterSetName -eq 'ById') {
+        Get-AdoWorkItem -Id $SourceId -Org $Org -Project $Project -ApiV $ApiV -Headers $Headers
+    } else {
+        $WorkItem
+    }
+    if ($null -eq $wi) { return $false }
+
+    $relsProp = $wi.PSObject.Properties['relations']
+    if (-not $relsProp -or $null -eq $relsProp.Value) { return $false }
+
+    foreach ($r in @($relsProp.Value)) {
+        if ($null -eq $r) { continue }
+        if ($r.rel -ne $LinkType) { continue }
+        if ((Get-AdoIdFromUrl -Url $r.url) -eq $TargetId) { return $true }
+    }
+    return $false
+}
 
 function Add-AdoWorkItemLink {
     <#
