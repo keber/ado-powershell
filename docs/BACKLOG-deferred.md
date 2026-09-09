@@ -42,7 +42,8 @@ guard could absorb it, a StrictMode-unreachable lazy cache initialisation, and t
 unrolling to `[string]`/`$null` despite a documented `[string[]]`):
 - request-level behaviour in `Invoke-AdoRequest` — retry on 429/503, the non-retrying 400/404
   paths, and header construction
-- `Get-AdoWorkItemsBatch` chunking, if the 200-item limit is ever enforced (see item 3)
+- `Get-AdoWorkItemsBatch` chunk boundaries - covered by throwaway checks when chunking
+  landed, not yet by a suite
 - JSON-patch body shape in the write functions — `ConvertTo-Json` collapsing a single-element
   array has already caused a defect here (fixed in 1.3.1)
 
@@ -90,24 +91,7 @@ read as fully as the child — which covers every work item type without enumera
 
 ---
 
-## 3. `Get-AdoWorkItemsBatch` 200-item chunking
-
-**What.** `Get-AdoWorkItemsBatch` documents a 200-item limit in its synopsis but does not enforce
-it, and `Invoke-AdoWiql` (`scripts/ado-workitems.ps1:157`) forwards every id from the WIQL result
-in a single call. With `-Top` above 200, Azure DevOps rejects the request with HTTP 400.
-
-**Why deferred.** Scope decision: current usage stays under the limit, and the QA projects that do
-exceed it already chunk on their own — `export-wiql-workitems-csv.ps1`,
-`republish-sprint16-testcase-titles.ps1`, and `fix-sprint16-duplicate-testcases.ps1` each implement
-it independently.
-
-**What it would take.** Chunk inside `Get-AdoWorkItemsBatch` so both entry points are fixed
-transparently, with no signature change. Roughly eight lines. Pairs naturally with item 1, since
-chunk-boundary behaviour is exactly what a test should pin down.
-
----
-
-## 4. `Repair-AdoMojibakeText`
+## 3. `Repair-AdoMojibakeText`
 
 **What.** Re-decodes text that was written as UTF-8 and read back as CP1252 — the `botÃ³n` class of
 corruption in work item titles. Implemented in
@@ -127,7 +111,7 @@ of this problem; `Repair-AdoMojibakeText` only cleans up after it.
 
 ---
 
-## 5. Priority map as configurable convention
+## 4. Priority map as configurable convention
 
 **What.** `$priorityMap = @{ P0='1'; P1='2'; ... }` appears in three project scripts.
 

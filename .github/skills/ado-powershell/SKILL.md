@@ -85,14 +85,14 @@ Pass them explicitly to override on a per-call basis.
 | `Get-AdoProjects` | List organization projects |
 | `Get-AdoTeams` | List teams in a project |
 | `Get-AdoWorkItem -Id <n>` | Single Work Item with all fields |
-| `Get-AdoWorkItemsBatch -Ids @(...)` | Up to 200 Work Items in one call |
+| `Get-AdoWorkItemsBatch -Ids @(...)` | Work Items by id - auto-batched in 200s, any number of ids |
 | `Get-AdoWorkItemComments -Id <n>` | Comments on a Work Item |
 | `Get-AdoWorkItemRevisions -Id <n>` | Field change history |
 | `Get-AdoWorkItemTypeFields -Type <T>` | Field definitions for a type, incl. default values (cached) |
 | `Get-AdoWorkItemParent -Id <n>` | Parent via `Hierarchy-Reverse` (`-IdOnly` for just the id) |
 | `Test-AdoWorkItemLink -SourceId <n> -TargetId <n> -LinkType <t>` | Does this link already exist? Check before adding |
 | `Get-AdoIdFromUrl -Url <u>` | Work Item id out of a relation URL |
-| `Invoke-AdoWiql -Query '...'` | WIQL query - returns items with fields |
+| `Invoke-AdoWiql -Query '...'` | WIQL query - returns items with fields (`-Fields` to narrow, `-IdsOnly` to skip the fetch) |
 | `New-AdoWorkItem -Type <T> -Title <t>` | 🔴 Create a Work Item |
 | `Update-AdoWorkItem -Id <n>` | 🔴 Update one or more fields |
 | `Add-AdoWorkItemComment -Id <n> -Text <t>` | 🔴 Add comment |

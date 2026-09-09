@@ -42,31 +42,61 @@ $wi.relations | Where-Object rel -eq 'System.LinkTypes.Related'
 
 ### `Get-AdoWorkItemsBatch -Ids @(...)`
 
-Fetches up to 200 Work Items in a single call.
+Fetches Work Items by id. Any number of ids: the endpoint caps a request at 200 and answers
+HTTP 400 beyond that, so larger sets are split into consecutive requests and the results
+concatenated.
 
 | Parameter | Required | Default | Notes |
 |-----------|----------|---------|-------|
-| `-Ids` | ✅ | - | `[int[]]` array, max 200 |
-| `-Fields` | | all fields | `@('System.Title','System.State',...)` to limit payload |
-| `-Expand` | | `All` | Same values as `Get-AdoWorkItem` |
+| `-Ids` | ✅ | - | `[int[]]` array, any length. Empty returns an empty array without calling ADO |
+| `-Fields` | | all fields | `@('System.Title','System.State',...)` to limit payload. Forces `-Expand None` |
+| `-Expand` | | `All` | Same values as `Get-AdoWorkItem`. Cannot be combined with `-Fields` |
+| `-BatchSize` | | `200` | Ids per request, 1-200. Lower it only for a constrained gateway |
 
 ```powershell
 Get-AdoWorkItemsBatch -Ids @(100, 101, 102) |
     Select-Object id, @{n='Title';e={$_.fields.'System.Title'}},
                       @{n='State';e={$_.fields.'System.State'}} |
     Format-Table -AutoSize
+
+# 750 ids -> four requests, one result set
+$items = Get-AdoWorkItemsBatch -Ids $manyIds
+
+# Only the fields needed, which also avoids the -Expand All payload
+Get-AdoWorkItemsBatch -Ids @(100,101) -Fields 'System.Id','System.Title','System.State'
 ```
+
+> **`-Fields` and `-Expand` are mutually exclusive.** ADO answers HTTP 400 when `fields` arrives
+> with an `$expand` other than `None`, so `-Fields` sets `-Expand None`. Passing both explicitly
+> raises an error rather than silently overriding your choice.
+
+> Results are in ADO's order within each batch, which is not guaranteed to match the order of
+> `-Ids`. Match on `id` rather than on position.
 
 ---
 
 ### `Invoke-AdoWiql -Query '...'`
 
-Executes a WIQL query and returns Work Items with their fields.
+Runs a WIQL query, then fetches the full Work Items for the ids it matched. The fetch is batched,
+so a `-Top` above 200 is fine.
 
 | Parameter | Required | Default | Notes |
 |-----------|----------|---------|-------|
 | `-Query` | ✅ | - | Full WIQL SELECT statement |
-| `-Top` | | `100` | Max results |
+| `-Top` | | `100` | Max ids the query may return. ADO caps it at 20000 |
+| `-Fields` | | all fields | Restrict the fields fetched per item |
+| `-IdsOnly` | | off | Return the matched ids and skip the fetch entirely |
+
+> **WIQL returns ids, not fields.** What the query SELECTs does not change which fields come back -
+> that is decided by the fetch. Use `-Fields` to narrow it.
+
+```powershell
+# Large result set, only the fields actually needed
+Invoke-AdoWiql -Query $q -Top 1000 -Fields 'System.Id','System.Title','System.State'
+
+# Just the ids: one request instead of one per 200 items
+$ids = Invoke-AdoWiql -Query $q -Top 5000 -IdsOnly
+```
 
 ```powershell
 # Active items in current sprint
