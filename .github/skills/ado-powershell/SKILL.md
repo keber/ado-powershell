@@ -23,6 +23,7 @@ Supports **🔵 read** operations (no side effects) and
 >    For full parameter tables and code examples, read the relevant domain reference file:
 >    - [references/base.md](references/base.md) - Session and response helpers (field access, UTF-8 reads)
 >    - [references/workitems.md](references/workitems.md) - Projects, Work Items, WIQL, Links, Attachments
+>    - [references/content.md](references/content.md) - Description/ReproSteps HTML and the images embedded in them
 >    - [references/testing.md](references/testing.md) - Test Plans, Suites, Cases, Runs, Results
 >    - [references/pipelines.md](references/pipelines.md) - List, query, and trigger Pipelines
 >    - [references/git.md](references/git.md) - Repositories, Branches, Iterations
@@ -97,6 +98,19 @@ Pass them explicitly to override on a per-call basis.
 | `Add-AdoWorkItemComment -Id <n> -Text <t>` | 🔴 Add comment |
 | `Add-AdoWorkItemLink -SourceId <n> -TargetId <n> -LinkType <t>` | 🔴 Link two Work Items |
 | `Add-AdoWorkItemAttachment -Id <n> -FilePath <p>` | 🔴 Upload and attach a file |
+
+### 🔵 Work Item content & inline images   ·   [references/content.md](references/content.md)
+
+| Function | Description |
+|----------|-------------|
+| `ConvertFrom-AdoHtml <html>` | HTML field to plain text (entities decoded, `&nbsp;` normalised) |
+| `Get-AdoWorkItemContentHtml -WorkItem <wi>` | The content field: ReproSteps for a Bug, else Description |
+| `Get-AdoInlineImageUrl -Html <h>` | Image URLs embedded in the HTML, in document order |
+| `Save-AdoInlineImage -WorkItem <wi> -OutDirectory <d>` | 🔴 Download those images to disk |
+| `Resolve-AdoAttachmentUrl -Url <u>` | Make an attachment URL downloadable (`download=true`, api-version) |
+
+> A description's UI mockups are usually embedded `<img>` tags, not attachments. Reading the text
+> alone drops them - download and look at the images before concluding what a work item describes.
 
 ### 🔵 Testing   ·   [references/testing.md](references/testing.md)
 
