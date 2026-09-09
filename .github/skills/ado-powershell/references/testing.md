@@ -213,6 +213,50 @@ Add-AdoTestCaseToSuite -PlanId $plan.id -SuiteId $suite.id -TestCaseIds @($tc.id
 
 ## Test Runs - Write
 
+
+### `Update-AdoTestSuite -PlanId <n> -SuiteId <n> -Name <t>`  🔴
+
+Renames an existing Test Suite. Supports `-WhatIf`.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `-PlanId` | Yes | Test Plan that owns the suite |
+| `-SuiteId` | Yes | Suite to rename |
+| `-Name` | Yes | New name |
+
+```powershell
+Update-AdoTestSuite -PlanId 25467 -SuiteId 38410 -Name 'Gestión de Pallets'
+Update-AdoTestSuite -PlanId 25467 -SuiteId 38410 -Name 'Nuevo nombre' -WhatIf
+```
+
+> The body is sent as UTF-8 with an explicit charset. Suite names routinely carry accented
+> characters, and letting the default encoding decide corrupts them.
+
+---
+
+### `Remove-AdoTestCaseFromSuite -PlanId <n> -SuiteId <n> -TestCaseId <n>`  🔴
+
+Detaches a Test Case from a Suite. The Test Case work item itself is not deleted.
+
+`ConfirmImpact` is `High`, so pass `-Confirm:$false` in unattended scripts. Supports `-WhatIf`.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `-PlanId` | Yes | Test Plan that owns the suite |
+| `-SuiteId` | Yes | Suite to remove from |
+| `-TestCaseId` | Yes | Test Case work item id |
+
+```powershell
+Remove-AdoTestCaseFromSuite -PlanId 25467 -SuiteId 38410 -TestCaseId 31022 -Confirm:$false
+```
+
+> **Why this one uses `api-version=5.0`.** The current `/_apis/testplan/...` route answers `DELETE`
+> for this operation with **HTTP 405 Method Not Allowed**. The legacy Test Management route
+> (`/_apis/test/...`, api-version 5.0) is the one that supports it. Confirmed empirically
+> 2026-07-14. The pinned version is deliberate - do not "modernise" it.
+
+---
+
 ### `New-AdoTestRun -Name <n> -PlanId <n>`
 
 Creates a new Test Run associated with a Test Plan.

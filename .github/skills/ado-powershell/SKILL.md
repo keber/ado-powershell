@@ -21,6 +21,7 @@ Supports **🔵 read** operations (no side effects) and
 >    Auto-initialises `$AdoSession` when `ADO_PAT`, `ADO_ORG`, and `ADO_PROJECT` are set.
 > 3. **This file is the quick-lookup index.** Do not read `.ps1` source files.
 >    For full parameter tables and code examples, read the relevant domain reference file:
+>    - [references/base.md](references/base.md) - Session and response helpers (field access, UTF-8 reads)
 >    - [references/workitems.md](references/workitems.md) - Projects, Work Items, WIQL, Links, Attachments
 >    - [references/testing.md](references/testing.md) - Test Plans, Suites, Cases, Runs, Results
 >    - [references/pipelines.md](references/pipelines.md) - List, query, and trigger Pipelines
@@ -86,6 +87,10 @@ Pass them explicitly to override on a per-call basis.
 | `Get-AdoWorkItemsBatch -Ids @(...)` | Up to 200 Work Items in one call |
 | `Get-AdoWorkItemComments -Id <n>` | Comments on a Work Item |
 | `Get-AdoWorkItemRevisions -Id <n>` | Field change history |
+| `Get-AdoWorkItemTypeFields -Type <T>` | Field definitions for a type, incl. default values (cached) |
+| `Get-AdoWorkItemParent -Id <n>` | Parent via `Hierarchy-Reverse` (`-IdOnly` for just the id) |
+| `Test-AdoWorkItemLink -SourceId <n> -TargetId <n> -LinkType <t>` | Does this link already exist? Check before adding |
+| `Get-AdoIdFromUrl -Url <u>` | Work Item id out of a relation URL |
 | `Invoke-AdoWiql -Query '...'` | WIQL query - returns items with fields |
 | `New-AdoWorkItem -Type <T> -Title <t>` | 🔴 Create a Work Item |
 | `Update-AdoWorkItem -Id <n>` | 🔴 Update one or more fields |
@@ -107,8 +112,20 @@ Pass them explicitly to override on a per-call basis.
 | `New-AdoTestSuite -PlanId <n> -Name <n> -ParentSuiteId <n>` | 🔴 Create Test Suite |
 | `New-AdoTestCase -Title <t>` | 🔴 Create Test Case (optional `-Steps @(...)` `-ExpectedResult <text>`; last step becomes ValidateStep) |
 | `Add-AdoTestCaseToSuite -PlanId <n> -SuiteId <n> -TestCaseIds @(...)` | 🔴 Link TC(s) to Suite - always pass `-Confirm:$false` in scripts |
+| `Update-AdoTestSuite -PlanId <n> -SuiteId <n> -Name <t>` | 🔴 Rename a Suite (UTF-8 safe) |
+| `Remove-AdoTestCaseFromSuite -PlanId <n> -SuiteId <n> -TestCaseId <n>` | 🔴 Detach a TC from a Suite (does not delete the TC) |
 | `New-AdoTestRun -Name <n> -PlanId <n>` | 🔴 Create Test Run |
 | `Update-AdoTestRunResults -RunId <n> -Results @(...)` | 🔴 Publish results |
+
+### 🔵 Session & response helpers   ·   `scripts/ado-base.ps1`
+
+Full docs: [references/base.md](references/base.md)
+
+| Function | Description |
+|----------|-------------|
+| `Get-AdoFieldValue -WorkItem <wi> -Name <f>` | Read a field without throwing under `Set-StrictMode`. **Use this instead of `$wi.fields.'X'`** - ADO omits unset fields, and dot notation on a missing one throws. Accepts `-Default`. |
+| `Read-AdoJsonUtf8 -Path <p>` | Read a local JSON file as UTF-8. **Use this instead of `Get-Content`** for anything written back to ADO - PS 5.1 decodes with the ANSI codepage and turns accents into mojibake. |
+| `Test-AdoSignInResponse -Response <r>` | Is this an ADO sign-in page rather than a payload? Called automatically by `Invoke-AdoRequest`. |
 
 ### 🔵 Pipelines   ·   [references/pipelines.md](references/pipelines.md)
 

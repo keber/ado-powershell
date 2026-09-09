@@ -114,6 +114,93 @@ Get-AdoWorkItemRevisions -Id 1234 |
 
 ---
 
+
+### `Get-AdoWorkItemTypeFields -Type <T>`
+
+Field definitions for a Work Item type, including the value ADO pre-fills. Cached per type for
+the session.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `-Type` | Yes | Type name, e.g. `User Story`. Spaces are URL-escaped automatically |
+| `-Force` | No | Bypass the session cache and re-query |
+
+```powershell
+# Tell "acceptance criteria not filled in" apart from "left as the template default"
+$def = (Get-AdoWorkItemTypeFields -Type 'User Story' |
+        Where-Object referenceName -eq 'Microsoft.VSTS.Common.AcceptanceCriteria').defaultValue
+$ac  = Get-AdoFieldValue -WorkItem $wi -Name 'Microsoft.VSTS.Common.AcceptanceCriteria'
+if ($ac -eq $def) { 'template default, not authored content' }
+```
+
+---
+
+### `Get-AdoWorkItemParent -Id <n>`
+
+Parent of a Work Item through `System.LinkTypes.Hierarchy-Reverse`, or `$null` when it has none.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `-Id` | Yes (or `-WorkItem`) | Work Item to fetch and inspect |
+| `-WorkItem` | Yes (or `-Id`) | An already-fetched Work Item - avoids a second round trip |
+| `-IdOnly` | No | Return just the parent id instead of the full Work Item |
+
+```powershell
+$parent = Get-AdoWorkItemParent -Id 20071
+"$($parent.id) | $(Get-AdoFieldValue -WorkItem $parent -Name 'System.Title')"
+
+# Walk to the root of the hierarchy
+$cur = Get-AdoWorkItem -Id 20071
+while ($p = Get-AdoWorkItemParent -WorkItem $cur) { $cur = $p }
+```
+
+> The Work Item must carry relations. The default `-Expand All` on `Get-AdoWorkItem` includes them;
+> `-Expand None` or a `-Fields` projection does not.
+
+---
+
+### `Test-AdoWorkItemLink -SourceId <n> -TargetId <n> -LinkType <t>`
+
+Whether a link of that type already exists between the two items.
+
+ADO accepts a duplicate relation without complaint, so re-running a linking script silently
+accumulates identical links. Matching is on the target id parsed out of the relation URL, not on
+the URL string, so it holds across host and organisation spellings.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `-SourceId` | Yes (or `-WorkItem`) | Work Item whose relations are inspected |
+| `-WorkItem` | Yes (or `-SourceId`) | An already-fetched source Work Item |
+| `-TargetId` | Yes | Work Item the link should point at |
+| `-LinkType` | Yes | Relation reference name (see the link-type table below) |
+
+```powershell
+# Idempotent linking
+if (-not (Test-AdoWorkItemLink -SourceId 1001 -TargetId 1050 -LinkType 'System.LinkTypes.Related')) {
+    Add-AdoWorkItemLink -SourceId 1001 -TargetId 1050 -LinkType 'System.LinkTypes.Related'
+}
+
+# Inspecting many links on one item: fetch once, test repeatedly
+$wi = Get-AdoWorkItem -Id 1001
+$targets | Where-Object { -not (Test-AdoWorkItemLink -WorkItem $wi -TargetId $_ -LinkType $lt) }
+```
+
+---
+
+### `Get-AdoIdFromUrl -Url <u>`
+
+Work Item id out of a relation URL; `$null` when the URL does not point at a Work Item.
+
+```powershell
+$rel = $wi.relations | Where-Object rel -eq 'System.LinkTypes.Hierarchy-Reverse'
+Get-AdoIdFromUrl -Url $rel.url    # -> 20088
+```
+
+> Splitting the URL on `/` and taking the last segment breaks on
+> `.../workitems/311?api-version=7.1` - it yields `311?api-version=7.1`, not `311`.
+
+---
+
 ## Work Items - Write
 
 All write functions support `-WhatIf` (simulate) and `-Confirm:$false` (skip prompt in scripts).
