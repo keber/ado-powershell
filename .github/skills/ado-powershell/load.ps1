@@ -5,6 +5,7 @@
 
 . "$PSScriptRoot/scripts/ado-base.ps1"
 . "$PSScriptRoot/scripts/ado-workitems.ps1"
+. "$PSScriptRoot/scripts/ado-content.ps1"
 . "$PSScriptRoot/scripts/ado-testing.ps1"
 . "$PSScriptRoot/scripts/ado-pipelines.ps1"
 . "$PSScriptRoot/scripts/ado-git.ps1"
