@@ -81,7 +81,18 @@ function Get-AdoWorkItem {
 
 function Get-AdoWorkItemsBatch {
     <#
-    .SYNOPSIS  Gets up to 200 Work Items in a single call.
+    .SYNOPSIS  Gets Work Items by id, in batches of 200.
+
+    .DESCRIPTION
+      The workitemsbatch endpoint accepts at most 200 ids per request and answers HTTP 400 above
+      that. Larger id sets are split into consecutive requests here and the results concatenated,
+      so callers do not have to chunk themselves. Results come back in ADO's order per batch, which
+      is not guaranteed to match the order of -Ids.
+
+    .PARAMETER BatchSize
+      Ids per request. Defaults to the API maximum of 200; lower it only to work around a
+      constrained gateway.
+
     .PARAMETER Fields
       Optional: array of field names. If omitted, returns all fields.
       ADO rejects a request that combines 'fields' with an '$expand' other than None (HTTP 400),
@@ -89,11 +100,18 @@ function Get-AdoWorkItemsBatch {
       in which case the conflict is reported rather than silently resolved.
     .EXAMPLE   Get-AdoWorkItemsBatch -Ids @(100,101,102) | Select-Object id, @{n='T';e={$_.fields.'System.Title'}}
     .EXAMPLE   Get-AdoWorkItemsBatch -Ids @(100,101) -Fields 'System.Id','System.Title'
+    .EXAMPLE   # 750 ids: four requests, one result set
+               Get-AdoWorkItemsBatch -Ids $manyIds
     #>
     param(
-        [Parameter(Mandatory)][int[]]$Ids,
+        # AllowEmptyCollection: a caller passing the (empty) result of a filter should get an
+        # empty result back, not a parameter binding error.
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [int[]]$Ids,
         [string[]]$Fields,
         [string]$Expand  = 'All',
+        [ValidateRange(1, 200)][int]$BatchSize = 200,
         [string]$Org     = $script:AdoSession.Org,
         [string]$Project = $script:AdoSession.Project,
         [string]$ApiV    = $script:AdoSession.ApiV,
@@ -111,13 +129,35 @@ function Get-AdoWorkItemsBatch {
         $Expand = 'None'
     }
 
-    $uri  = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/workitemsbatch?api-version=$ApiV"
-    $body = @{ ids = $Ids; '$expand' = $Expand }
-    if ($Fields) { $body.fields = $Fields }
-    # Read-only POST: call Invoke-AdoRequest directly (not ShouldProcess)
-    $r = Invoke-AdoRequest -Method POST -Uri $uri -Body ($body | ConvertTo-Json -Depth 5) `
-        -ContentType 'application/json' -Headers $Headers
-    return $r.value
+    # Unary comma on every return path: 'return @()' unrolls to $null, and a caller doing
+    # .Count on the result would break under StrictMode.
+    if ($Ids.Count -eq 0) { return , ([object[]]@()) }
+
+    $uri     = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/workitemsbatch?api-version=$ApiV"
+    $results = New-Object System.Collections.Generic.List[object]
+
+    # The endpoint caps a request at 200 ids and answers 400 beyond it, so walk the ids in
+    # batches. A single batch behaves exactly as before.
+    for ($offset = 0; $offset -lt $Ids.Count; $offset += $BatchSize) {
+        $count = [Math]::Min($BatchSize, $Ids.Count - $offset)
+        $slice = $Ids[$offset..($offset + $count - 1)]
+
+        # @() keeps a one-id slice an array: ConvertTo-Json renders a bare int otherwise and the
+        # endpoint rejects the body.
+        $body = @{ ids = @($slice); '$expand' = $Expand }
+        if ($Fields) { $body.fields = $Fields }
+
+        # Read-only POST: call Invoke-AdoRequest directly (not ShouldProcess)
+        $r = Invoke-AdoRequest -Method POST -Uri $uri -Body ($body | ConvertTo-Json -Depth 5) `
+            -ContentType 'application/json' -Headers $Headers
+
+        $valueProp = $r.PSObject.Properties['value']
+        if ($valueProp -and $null -ne $valueProp.Value) {
+            foreach ($item in @($valueProp.Value)) { $results.Add($item) }
+        }
+    }
+
+    return , $results.ToArray()
 }
 
 function Get-AdoWorkItemComments {
@@ -202,13 +242,34 @@ function Get-AdoWorkItemTypeFields {
 function Invoke-AdoWiql {
     <#
     .SYNOPSIS  Executes a WIQL query and returns Work Items with their fields.
+
+    .DESCRIPTION
+      Runs the query, then fetches the full Work Items for the ids it returned. The fetch is
+      batched, so a -Top above 200 is fine.
+
+      WIQL itself returns ids only; -Fields is forwarded to the fetch, not to the query. What the
+      query SELECTs does not change which fields come back.
+
     .NOTES     WIQL uses POST internally, but is a read-only operation.
+
+    .PARAMETER Top     Maximum ids the query may return. ADO caps this at 20000.
+    .PARAMETER Fields  Restrict the fields fetched for each item; also avoids the -Expand All cost.
+    .PARAMETER IdsOnly Return the ids the query matched, skipping the fetch entirely.
+
     .EXAMPLE
         Invoke-AdoWiql -Query "SELECT [System.Id],[System.Title] FROM WorkItems WHERE [System.State] = 'Active'"
+    .EXAMPLE
+        # Large result set, only the fields actually needed
+        Invoke-AdoWiql -Query $q -Top 1000 -Fields 'System.Id','System.Title','System.State'
+    .EXAMPLE
+        # Just the ids - one request instead of one per 200 items
+        $ids = Invoke-AdoWiql -Query $q -Top 5000 -IdsOnly
     #>
     param(
         [Parameter(Mandatory)][string]$Query,
         [int]$Top        = 100,
+        [string[]]$Fields,
+        [switch]$IdsOnly,
         [string]$Org     = $script:AdoSession.Org,
         [string]$Project = $script:AdoSession.Project,
         [string]$ApiV    = $script:AdoSession.ApiV,
@@ -218,9 +279,21 @@ function Invoke-AdoWiql {
     $body = @{ query = $Query } | ConvertTo-Json
     $r    = Invoke-AdoRequest -Method POST -Uri $uri -Body $body `
         -ContentType 'application/json' -Headers $Headers
-    if (-not $r.workItems -or $r.workItems.Count -eq 0) { return @() }
-    $ids  = $r.workItems | Select-Object -ExpandProperty id
-    return Get-AdoWorkItemsBatch -Ids $ids -Org $Org -Project $Project -ApiV $ApiV -Headers $Headers
+    # A query matching nothing may omit workItems entirely; under StrictMode reading an absent
+    # property throws, so check for it before use.
+    $wiProp = $r.PSObject.Properties['workItems']
+    if (-not $wiProp -or $null -eq $wiProp.Value) { return , ([object[]]@()) }
+
+    $ids = @($wiProp.Value | Select-Object -ExpandProperty id)
+    if ($ids.Count -eq 0) { return , ([object[]]@()) }
+
+    if ($IdsOnly) { return , ([int[]]$ids) }
+
+    $batchArgs = @{
+        Ids = $ids; Org = $Org; Project = $Project; ApiV = $ApiV; Headers = $Headers
+    }
+    if ($Fields) { $batchArgs.Fields = $Fields }
+    return Get-AdoWorkItemsBatch @batchArgs
 }
 
 #endregion
