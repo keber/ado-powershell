@@ -14,12 +14,32 @@ Azure DevOps organisation — it is a connectivity check, not a regression suite
 **Why deferred.** Meaningful coverage requires mocking `Invoke-RestMethod` / `Invoke-WebRequest`,
 which is a project of its own rather than a step inside a promotion pass.
 
-**What it would take.** Pester plus a fake HTTP layer. Two candidate seams already exist:
-every request funnels through `Invoke-AdoRequest` in `scripts/ado-base.ps1`, and `ado-qa` already
-carries a working `Export-ScriptFunctions` harness under
-`.github/skills/ado-qa/assets/*/tests/_support/` that solves the same dot-sourcing problem.
+**What it would take.** Less than this entry originally assumed. The 2026-09-09 promotion pass
+exercised every added function from a throwaway harness, and no HTTP mocking library was needed:
+after dot-sourcing the scripts, redefining `Invoke-AdoRequest`, `Invoke-AdoGet` or
+`Invoke-AdoDownload` as plain functions in the caller's scope intercepts every request, because
+they are the single seam all traffic passes through. Roughly 90 behaviour checks ran that way,
+including real file writes for the download paths.
 
-**Worth covering first**, in rough order of risk:
+Porting that to Pester is mostly mechanical. Three harness details cost time and are worth
+recording:
+
+- Functions default their parameters from `$script:AdoSession`, which is evaluated even when every
+  parameter is passed explicitly. A test must set a fake session object including `BaseUrl`.
+- A `ConfirmImpact='High'` function blocks on a confirmation prompt in a non-interactive host.
+  Pass `-Confirm:$false` at the call, as production scripts do.
+- A test file containing accented characters must be saved as UTF-8 **with BOM**, or PowerShell 5.1
+  reads it with the ANSI codepage and string comparisons fail for the very reason
+  `Read-AdoJsonUtf8` exists.
+
+`ado-qa` also carries an `Export-ScriptFunctions` harness under
+`.github/skills/ado-qa/assets/*/tests/_support/` that solves the same dot-sourcing problem, if a
+more structured approach is wanted.
+
+**Worth covering first**, in rough order of risk (the promotion pass found four defects this way,
+all in code that read correctly — `[Parameter(Mandatory)]` rejecting a null before an internal
+guard could absorb it, a StrictMode-unreachable lazy cache initialisation, and two array returns
+unrolling to `[string]`/`$null` despite a documented `[string[]]`):
 - request-level behaviour in `Invoke-AdoRequest` — retry on 429/503, the non-retrying 400/404
   paths, and header construction
 - `Get-AdoWorkItemsBatch` chunking, if the 200-item limit is ever enforced (see item 3)
