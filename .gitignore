@@ -1,3 +1,7 @@
 config.ps1
 .env
 node_modules/
+reference_tools/
+reference_tools-2/
+.github/skills/visual-explainer
+.atl
