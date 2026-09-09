@@ -77,8 +77,13 @@ function Get-AdoWorkItem {
 function Get-AdoWorkItemsBatch {
     <#
     .SYNOPSIS  Gets up to 200 Work Items in a single call.
-    .PARAMETER Fields  Optional: array of field names. If omitted, returns all fields.
+    .PARAMETER Fields
+      Optional: array of field names. If omitted, returns all fields.
+      ADO rejects a request that combines 'fields' with an '$expand' other than None (HTTP 400),
+      so supplying -Fields forces Expand to None unless an explicit -Expand was also passed -
+      in which case the conflict is reported rather than silently resolved.
     .EXAMPLE   Get-AdoWorkItemsBatch -Ids @(100,101,102) | Select-Object id, @{n='T';e={$_.fields.'System.Title'}}
+    .EXAMPLE   Get-AdoWorkItemsBatch -Ids @(100,101) -Fields 'System.Id','System.Title'
     #>
     param(
         [Parameter(Mandatory)][int[]]$Ids,
@@ -89,6 +94,18 @@ function Get-AdoWorkItemsBatch {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    # 'fields' and '$expand' are mutually exclusive in the workitemsbatch API: any $expand other
+    # than None alongside 'fields' is answered with HTTP 400. Resolve it here rather than letting
+    # the caller discover it as a server error.
+    if ($Fields) {
+        if ($PSBoundParameters.ContainsKey('Expand') -and $Expand -ne 'None') {
+            throw ("Get-AdoWorkItemsBatch: -Fields cannot be combined with -Expand '$Expand'. " +
+                   "ADO rejects that combination (HTTP 400). Drop -Expand to select fields, " +
+                   "or drop -Fields to expand.")
+        }
+        $Expand = 'None'
+    }
+
     $uri  = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/workitemsbatch?api-version=$ApiV"
     $body = @{ ids = $Ids; '$expand' = $Expand }
     if ($Fields) { $body.fields = $Fields }

@@ -37,6 +37,150 @@ function New-AdoHeaders {
 
 #endregion
 
+#region -- Response helpers --
+
+function Get-AdoFieldValue {
+    <#
+    .SYNOPSIS
+      Safely reads a field from a Work Item under Set-StrictMode.
+
+    .DESCRIPTION
+      ADO omits empty fields from the response entirely, so dot notation
+      ($wi.fields.'System.Reason') throws under Set-StrictMode whenever a field happens to be
+      unset. This skill enables Set-StrictMode -Version Latest in every script, so callers need
+      an accessor that returns $null - or a supplied default - instead of throwing.
+
+    .PARAMETER WorkItem  A Work Item object as returned by Get-AdoWorkItem / Get-AdoWorkItemsBatch.
+    .PARAMETER Fields    A fields object directly, as an alternative to -WorkItem.
+    .PARAMETER Name      Reference name of the field, e.g. 'System.Title'.
+    .PARAMETER Default   Value to return when the field is absent or empty. Default: $null.
+
+    .EXAMPLE
+      $reason = Get-AdoFieldValue -WorkItem $wi -Name 'System.Reason'
+    .EXAMPLE
+      # Distinguish "field absent" from "field empty" by supplying a sentinel
+      $ac = Get-AdoFieldValue -WorkItem $wi -Name 'Microsoft.VSTS.Common.AcceptanceCriteria' -Default ''
+    #>
+    [CmdletBinding(DefaultParameterSetName = 'WorkItem')]
+    param(
+        # AllowNull: a caller passing a Work Item that turned out to be $null is exactly the case
+        # this helper exists to absorb - it must return the default, not fail parameter binding.
+        [Parameter(Mandatory, ParameterSetName = 'WorkItem', Position = 0)]
+        [AllowNull()]
+        [object]$WorkItem,
+
+        [Parameter(Mandatory, ParameterSetName = 'Fields')]
+        [AllowNull()]
+        [object]$Fields,
+
+        [Parameter(Mandatory, Position = 1)]
+        [string]$Name,
+
+        [object]$Default = $null
+    )
+
+    $fieldsObj = if ($PSCmdlet.ParameterSetName -eq 'Fields') {
+        $Fields
+    } else {
+        if ($null -eq $WorkItem) { return $Default }
+        $p = $WorkItem.PSObject.Properties['fields']
+        if ($p) { $p.Value } else { $null }
+    }
+
+    if ($null -eq $fieldsObj) { return $Default }
+
+    $prop = $fieldsObj.PSObject.Properties[$Name]
+    if (-not $prop) { return $Default }
+    if ($null -eq $prop.Value) { return $Default }
+    return $prop.Value
+}
+
+function Test-AdoSignInResponse {
+    <#
+    .SYNOPSIS
+      Tells whether a response is an Azure DevOps sign-in page rather than the requested resource.
+
+    .DESCRIPTION
+      When the PAT is missing, expired, or scoped for a different organisation, ADO answers with
+      the interactive sign-in page and HTTP 200 - not with 401. Depending on the endpoint, the
+      page reaches the caller either as a raw HTML string or as an object parsed out of that HTML
+      by Invoke-RestMethod. Both shapes are treated as a sign-in page here.
+
+      A parsed sign-in page is recognised by the absence of any recognisable ADO payload property
+      combined with sign-in markers in its serialised form; this keeps legitimate but unusual
+      payloads from being misread as authentication failures.
+
+    .PARAMETER Response  The value returned by Invoke-RestMethod.
+    .OUTPUTS  [bool]
+    #>
+    param(
+        [Parameter(Mandatory, ValueFromPipeline)]
+        [AllowNull()]
+        [object]$Response
+    )
+
+    if ($null -eq $Response) { return $false }
+
+    $signInPattern = '(?i)<html|sign.?in|__RequestVerificationToken|/_signin'
+
+    # Raw HTML: match directly.
+    if ($Response -is [string]) {
+        return [bool]($Response -match $signInPattern)
+    }
+
+    # A real ADO payload always carries at least one of these.
+    foreach ($known in 'id', 'value', 'count', 'fields', 'workItems', 'name') {
+        if ($Response.PSObject.Properties[$known]) { return $false }
+    }
+
+    # No recognisable payload: fall back to inspecting the serialised form.
+    $text = $null
+    try { $text = $Response | ConvertTo-Json -Depth 4 -Compress } catch { $text = [string]$Response }
+    if (-not $text) { return $false }
+    return [bool]($text -match $signInPattern)
+}
+
+function Read-AdoJsonUtf8 {
+    <#
+    .SYNOPSIS
+      Reads a local JSON file as UTF-8 and returns the parsed object.
+
+    .DESCRIPTION
+      Get-Content in Windows PowerShell 5.1 decodes using the ANSI codepage, not UTF-8. Reading a
+      UTF-8 file that way turns accented characters into mojibake ('boton' becomes 'botAn'), and
+      pushing that text back into ADO corrupts the work item. This reads with an explicit UTF-8
+      encoding on every PowerShell version and strips a BOM if present.
+
+      Use it for any local file whose contents will be written to ADO.
+
+    .PARAMETER Path  Path to the JSON file.
+    .PARAMETER Raw   Return the decoded text instead of parsing it as JSON.
+
+    .EXAMPLE
+      $titles = Read-AdoJsonUtf8 -Path ./titles.json
+    #>
+    param(
+        [Parameter(Mandatory, Position = 0)]
+        [string]$Path,
+
+        [switch]$Raw
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "File not found: $Path"
+    }
+
+    $text = [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8)
+
+    # ReadAllText keeps the BOM as U+FEFF; ConvertFrom-Json rejects it.
+    if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
+
+    if ($Raw) { return $text }
+    return ($text | ConvertFrom-Json)
+}
+
+#endregion
+
 #region -- HTTP core with retries --
 
 function Invoke-AdoRequest {
@@ -89,9 +233,14 @@ function Invoke-AdoRequest {
 
             $response = Invoke-RestMethod @params
 
-            # Detect HTML response (login page instead of JSON)
-            if ($response -is [string] -and $response -match '(?i)<html|sign.?in') {
-                throw "Server returned HTML. Check ADO_PAT and the URL: $Uri"
+            # Detect a sign-in page returned instead of the requested resource.
+            # ADO answers an unauthenticated request with the login page and HTTP 200, so the
+            # status-code branches below never see it. The page arrives either as a raw string
+            # or - when Invoke-RestMethod manages to parse it - as an object, so both are checked.
+            if (Test-AdoSignInResponse -Response $response) {
+                throw ("Received an Azure DevOps sign-in page instead of a response. " +
+                       "Check ADO_PAT (valid? expired? correct scopes?), ADO_ORG and " +
+                       "ADO_PROJECT. Request: $Uri")
             }
             return $response
         }
