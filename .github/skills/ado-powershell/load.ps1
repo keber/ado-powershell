@@ -11,6 +11,7 @@
 . "$PSScriptRoot/scripts/ado-testing.ps1"
 . "$PSScriptRoot/scripts/ado-pipelines.ps1"
 . "$PSScriptRoot/scripts/ado-git.ps1"
+. "$PSScriptRoot/scripts/ado-pullrequests.ps1"
 
 $adoLoadWriteCred = [bool]($env:ADO_PAT_WRITE -or $env:ADO_PAT -or $env:AZURE_DEVOPS_EXT_PAT -or $env:SYSTEM_ACCESSTOKEN)
 if ($adoLoadWriteCred -or $env:ADO_PAT_READ) {
