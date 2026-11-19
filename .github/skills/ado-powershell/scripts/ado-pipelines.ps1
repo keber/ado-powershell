@@ -105,7 +105,7 @@ function Invoke-AdoPipelineRun {
     )
 
     $body = @{}
-    if ($Branch)                        { $body.resources   = @{ repositories = @{ self = @{ refName = "refs/heads/$($Branch.TrimStart('refs/heads/'))" } } } }
+    if ($Branch)                        { $body.resources   = @{ repositories = @{ self = @{ refName = "refs/heads/$($Branch -replace '^refs/heads/', '')" } } } }
     if ($Variables.Count -gt 0)         { $body.variables   = $Variables          }
     if ($TemplateParameters.Count -gt 0){ $body.templateParameters = $TemplateParameters }
     if ($StagesToSkip.Count -gt 0)      { $body.stagesToSkip = $StagesToSkip      }
