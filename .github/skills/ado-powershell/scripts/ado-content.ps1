@@ -330,6 +330,11 @@ function Save-AdoInlineImage {
                 Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue
                 continue
             }
+            if (-not $isData -and -not (Test-AdoImageSignature -Path $outFile)) {
+                Write-Warning "Image ${i}: downloaded content is not an image (expired PAT or sign-in page?), discarded."
+                Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue
+                continue
+            }
             $written.Add($outFile)
         }
         catch {
@@ -342,6 +347,27 @@ function Save-AdoInlineImage {
 
     # Unary comma keeps a single path from unrolling to a bare [string].
     return , $written.ToArray()
+}
+
+function Test-AdoImageSignature {
+    <#
+    .SYNOPSIS  True when a file starts with a known image signature (PNG, JPEG, GIF, BMP, WEBP, SVG).
+    .NOTES     Internal helper for Save-AdoInlineImage.
+    #>
+    param([Parameter(Mandatory, Position = 0)][string]$Path)
+    $fs = [IO.File]::OpenRead($Path)
+    try {
+        $buf = New-Object byte[] 512
+        $n = $fs.Read($buf, 0, $buf.Length)
+    } finally { $fs.Dispose() }
+    if ($n -ge 8 -and $buf[0] -eq 0x89 -and $buf[1] -eq 0x50 -and $buf[2] -eq 0x4E -and $buf[3] -eq 0x47) { return $true }
+    if ($n -ge 3 -and $buf[0] -eq 0xFF -and $buf[1] -eq 0xD8 -and $buf[2] -eq 0xFF) { return $true }
+    if ($n -ge 4 -and $buf[0] -eq 0x47 -and $buf[1] -eq 0x49 -and $buf[2] -eq 0x46 -and $buf[3] -eq 0x38) { return $true }
+    if ($n -ge 2 -and $buf[0] -eq 0x42 -and $buf[1] -eq 0x4D) { return $true }
+    if ($n -ge 12 -and [Text.Encoding]::ASCII.GetString($buf, 0, 4) -eq 'RIFF' -and
+        [Text.Encoding]::ASCII.GetString($buf, 8, 4) -eq 'WEBP') { return $true }
+    $text = [Text.Encoding]::UTF8.GetString($buf, 0, $n).TrimStart([char]0xFEFF).TrimStart()
+    return ($text -match '(?i)^(<svg|<\?xml)')
 }
 
 function Get-AdoImageExtension {

@@ -412,7 +412,23 @@ function Invoke-AdoDownload {
         }
         $Headers = New-AdoHeaders
     }
-    Invoke-WebRequest -Uri $Uri -Headers $Headers -OutFile $OutFile -ErrorAction Stop
+    # -PassThru keeps the response object alongside -OutFile (5.1 and 7), so the Content-Type
+    # can be inspected: ADO answers a bad/expired PAT with its HTML sign-in page and HTTP 200.
+    $response = Invoke-WebRequest -Uri $Uri -Headers $Headers -OutFile $OutFile -PassThru -ErrorAction Stop
+    $contentType = $null
+    if ($null -ne $response -and $null -ne $response.Headers) {
+        $contentType = [string]($response.Headers['Content-Type'] | Select-Object -First 1)
+    }
+    if ($contentType -match '(?i)^\s*text/html') {
+        Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
+        $signInMsg = ("Received an Azure DevOps sign-in page (text/html) instead of the requested file. " +
+                      "Check ADO_PAT (valid? expired? correct scopes?), ADO_ORG and " +
+                      "ADO_PROJECT. Request: $Uri")
+        # Same ErrorId as Invoke-AdoRequest's sign-in detection (authentication problem).
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new($signInMsg), 'AdoSignInPage',
+            [System.Management.Automation.ErrorCategory]::AuthenticationError, $Uri)
+    }
 }
 #endregion
 
