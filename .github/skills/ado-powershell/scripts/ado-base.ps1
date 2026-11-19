@@ -106,6 +106,11 @@ function Test-AdoSignInResponse {
       page reaches the caller either as a raw HTML string or as an object parsed out of that HTML
       by Invoke-RestMethod. Both shapes are treated as a sign-in page here.
 
+      A raw string counts only if it is an HTML document (starts with <!DOCTYPE html or <html)
+      that contains a sign-in specific marker (__RequestVerificationToken, /_signin,
+      login.microsoftonline.com, or a <title> mentioning "sign in"). Plain text that merely
+      mentions "sign in" is a legitimate payload.
+
       A parsed sign-in page is recognised by the absence of any recognisable ADO payload property
       combined with sign-in markers in its serialised form; this keeps legitimate but unusual
       payloads from being misread as authentication failures.
@@ -121,10 +126,13 @@ function Test-AdoSignInResponse {
 
     if ($null -eq $Response) { return $false }
 
-    $signInPattern = '(?i)<html|sign.?in|__RequestVerificationToken|/_signin'
+    # Strong sign-in markers only. Bare words such as "sign in" or a stray "<html" appear in
+    # legitimate text payloads (markdown, logs, file content) and must not match on their own.
+    $signInPattern = '(?i)__RequestVerificationToken|/_signin|login\.microsoftonline\.com|<title>[^<]*sign.?in'
 
-    # Raw HTML: match directly.
+    # Raw string: only an HTML document (after optional BOM/whitespace) carrying a strong marker.
     if ($Response -is [string]) {
+        if ($Response -notmatch '(?i)^[\s\uFEFF]*<(!DOCTYPE\s+html|html)\b') { return $false }
         return [bool]($Response -match $signInPattern)
     }
 
@@ -250,13 +258,20 @@ function Invoke-AdoRequest {
             # status-code branches below never see it. The page arrives either as a raw string
             # or - when Invoke-RestMethod manages to parse it - as an object, so both are checked.
             if (Test-AdoSignInResponse -Response $response) {
-                throw ("Received an Azure DevOps sign-in page instead of a response. " +
-                       "Check ADO_PAT (valid? expired? correct scopes?), ADO_ORG and " +
-                       "ADO_PROJECT. Request: $Uri")
+                # Tagged with a distinct ErrorId so the catch below rethrows it without retrying.
+                $signInMsg = ("Received an Azure DevOps sign-in page instead of a response. " +
+                              "Check ADO_PAT (valid? expired? correct scopes?), ADO_ORG and " +
+                              "ADO_PROJECT. Request: $Uri")
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new($signInMsg), 'AdoSignInPage',
+                    [System.Management.Automation.ErrorCategory]::AuthenticationError, $Uri)
             }
             return $response
         }
         catch {
+            # Sign-in page: authentication problem, retrying cannot help.
+            if ($_.FullyQualifiedErrorId -eq 'AdoSignInPage') { throw }
+
             $lastErr = $_
             $status  = $null
             try { $status = [int]$_.Exception.Response.StatusCode } catch { }
