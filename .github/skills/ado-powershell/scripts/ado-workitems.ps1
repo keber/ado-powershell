@@ -314,7 +314,11 @@ function Invoke-AdoWiql {
     # property throws, so check for it before use.
     $wiProp  = $r.PSObject.Properties['workItems']
     $relProp = $r.PSObject.Properties['workItemRelations']
+    # -Top caps result ROWS: work items for flat queries, relation rows for link queries (a row
+    # can contribute two ids), so truncation is judged on rows, not on distinct ids.
+    $rowCount = 0
     if ($relProp -and $null -ne $relProp.Value) {
+        $rowCount = @($relProp.Value).Count
         # WorkItemLinks (one-hop/tree) queries return workItemRelations instead of workItems.
         # source is null for root rows; keep distinct ids in first-seen order.
         $seen = @{}
@@ -331,10 +335,13 @@ function Invoke-AdoWiql {
         })
     }
     elseif (-not $wiProp -or $null -eq $wiProp.Value) { return , ([object[]]@()) }
-    else { $ids = @($wiProp.Value | Select-Object -ExpandProperty id) }
+    else {
+        $ids      = @($wiProp.Value | Select-Object -ExpandProperty id)
+        $rowCount = $ids.Count
+    }
     if ($ids.Count -eq 0) { return , ([object[]]@()) }
-    if ($ids.Count -eq $Top) {
-        Write-Warning "WIQL returned exactly -Top ($Top) ids; the result is likely truncated. Narrow the query or raise -Top (max 20000)."
+    if ($rowCount -eq $Top) {
+        Write-Warning "WIQL returned exactly -Top ($Top) rows; the result is likely truncated. Narrow the query or raise -Top (max 20000)."
     }
 
     if ($IdsOnly) { return , ([int[]]$ids) }

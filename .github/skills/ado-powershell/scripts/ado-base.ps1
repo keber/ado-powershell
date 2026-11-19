@@ -403,7 +403,7 @@ function Invoke-AdoGetPaged {
       repeats, or when -MaxItems items were collected.
 
       Same error mapping as Invoke-AdoRequest: 401/403/400/404 are not retried; 429/503 back off
-      exponentially; other errors back off linearly.
+      exponentially (429 honours Retry-After, capped at 120s); other errors back off linearly. A sign-in page is thrown as ErrorId AdoSignInPage and is not retried.
 
     .PARAMETER Uri            First-page URL (including api-version). Must not carry continuationToken.
     .PARAMETER Headers        Auth headers. Default: New-AdoHeaders.
@@ -473,6 +473,16 @@ function Invoke-AdoGetPaged {
                 if ($attempt -lt $MaxRetries) {
                     if ($status -in 429, 503) {
                         $waitSec = $RetryDelaySec * [Math]::Pow(2, $attempt)
+                        if ($status -eq 429) {
+                            # Honour Retry-After (seconds), capped at 120s, like Invoke-AdoRequest.
+                            $retryAfter = 0
+                            try {
+                                if ([int]::TryParse([string]$lastErr.Exception.Response.Headers['Retry-After'], [ref]$retryAfter) -and
+                                    $retryAfter -gt 0) {
+                                    $waitSec = [Math]::Min($retryAfter, 120)
+                                }
+                            } catch { }
+                        }
                         Write-Warning "[$status] Rate-limit. Retry $attempt/$MaxRetries in ${waitSec}s..."
                     } else {
                         $waitSec = $RetryDelaySec * $attempt
@@ -508,9 +518,13 @@ function Invoke-AdoGetPaged {
         $signIn = if ($null -eq $page) { Test-AdoSignInResponse -Response $text }
                   else                 { Test-AdoSignInResponse -Response $page }
         if ($signIn -or $null -eq $page) {
-            throw ("Received an Azure DevOps sign-in page instead of a response. " +
-                   "Check ADO_PAT (valid? expired? correct scopes?), ADO_ORG and " +
-                   "ADO_PROJECT. Request: $pageUri")
+            # Same ErrorId as Invoke-AdoRequest; thrown outside the retry loop, so never retried.
+            $signInMsg = ("Received an Azure DevOps sign-in page instead of a response. " +
+                          "Check ADO_PAT (valid? expired? correct scopes?), ADO_ORG and " +
+                          "ADO_PROJECT. Request: $pageUri")
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new($signInMsg), 'AdoSignInPage',
+                [System.Management.Automation.ErrorCategory]::AuthenticationError, $pageUri)
         }
 
         $itemsProp = $page.PSObject.Properties[$ItemsProperty]

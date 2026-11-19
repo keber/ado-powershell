@@ -216,3 +216,57 @@ Describe 'M4 - WIQL and test list truncation warnings' {
         "$w2" | Should -Match 'truncated'
     }
 }
+
+Describe 'M4 - Invoke-AdoGetPaged: aligned with Invoke-AdoRequest semantics' {
+    BeforeAll { $script:Sleeps = [System.Collections.Generic.List[int]]::new(); Mock Start-Sleep { $script:Sleeps.Add([int]$Seconds) } }
+
+    It 'throws the sign-in page as ErrorId AdoSignInPage and does not retry it' {
+        $script:Calls = 0
+        Mock Invoke-WebRequest {
+            $script:Calls++
+            [pscustomobject]@{ StatusCode = 200; Headers = @{}
+                Content = '<html><head><title>Azure DevOps Services | Sign In</title></head></html>' }
+        }
+        $err = $null
+        try { Invoke-AdoGetPaged -Uri 'https://dev.azure.com/o/_apis/x?api-version=7.1' -Headers $script:FakeHeaders } catch { $err = $_ }
+        $err.FullyQualifiedErrorId | Should -Be 'AdoSignInPage'
+        $script:Calls | Should -Be 1
+    }
+
+    It 'honours Retry-After on 429, capped at 120 seconds' {
+        $script:Sleeps.Clear(); $script:N = 0
+        Mock Invoke-WebRequest {
+            $script:N++
+            if ($script:N -eq 1) {
+                $resp = [pscustomobject]@{ StatusCode = 429; Headers = @{ 'Retry-After' = '999' } }
+                $ex = [System.Exception]::new('429')
+                $ex | Add-Member -NotePropertyName Response -NotePropertyValue $resp -Force
+                throw $ex
+            }
+            New-FakeWebResponse -Page ([pscustomobject]@{ value = (New-Items 'p' 1 1) })
+        }
+        $r = Invoke-AdoGetPaged -Uri 'https://dev.azure.com/o/_apis/x?api-version=7.1' -Headers $script:FakeHeaders -WarningAction SilentlyContinue
+        @($r).Count | Should -Be 1
+        $script:Sleeps[0] | Should -Be 120
+    }
+}
+
+Describe 'M4 - Invoke-AdoWiql truncation on link queries' {
+    BeforeAll {
+        Mock Start-Sleep { }
+        # 2 relation rows, 3 distinct ids: -Top counts rows, so Top 2 is truncated, Top 3 is not.
+        Mock Invoke-AdoRequest {
+            [pscustomobject]@{ workItemRelations = @(
+                [pscustomobject]@{ source = $null; target = [pscustomobject]@{ id = 1 } },
+                [pscustomobject]@{ source = [pscustomobject]@{ id = 1 }; target = [pscustomobject]@{ id = 2 } }) }
+        }
+    }
+    It 'warns when relation rows equal -Top' {
+        $null = Invoke-AdoWiql -Query 'q' -Top 2 -IdsOnly -Headers $script:FakeHeaders -WarningVariable w -WarningAction SilentlyContinue
+        ($w -join ' ') | Should -Match 'truncated'
+    }
+    It 'does not warn when rows are below -Top even if distinct ids equal it' {
+        $null = Invoke-AdoWiql -Query 'q' -Top 3 -IdsOnly -Headers $script:FakeHeaders -WarningVariable w -WarningAction SilentlyContinue
+        @($w).Count | Should -Be 0
+    }
+}
