@@ -262,10 +262,23 @@ function Invoke-AdoRequest {
             # 400: bad request - do not retry, include response body for diagnosis
             if ($status -eq 400) {
                 $body400 = ''
+                # PS 5.1 and 7 both populate ErrorDetails.Message when the server returns a body.
+                if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+                    $body400 = [string]$_.ErrorDetails.Message
+                } else {
+                    # Fallback for 5.1 (HttpWebResponse); absent on PS 7 (HttpResponseMessage).
+                    try {
+                        $stream400 = $_.Exception.Response.GetResponseStream()
+                        $reader400 = [System.IO.StreamReader]::new($stream400)
+                        $body400   = $reader400.ReadToEnd()
+                    } catch { }
+                }
+                # If the body is JSON with a "message" property, surface that message.
                 try {
-                    $stream400 = $_.Exception.Response.GetResponseStream()
-                    $reader400 = [System.IO.StreamReader]::new($stream400)
-                    $body400   = $reader400.ReadToEnd()
+                    $json400 = $body400 | ConvertFrom-Json -ErrorAction Stop
+                    if ($json400 -and $json400.PSObject.Properties['message'] -and $json400.message) {
+                        $body400 = [string]$json400.message
+                    }
                 } catch { }
                 throw "400 Bad Request - $Uri`n$body400"
             }
