@@ -54,6 +54,10 @@ Get-AdoPipelineRuns -PipelineId 12 -Top 20 -Result 'failed' -CreatedFrom '2025-0
 
 Triggers a new pipeline run and returns the created run object.
 
+> ⚠️ **`ConfirmImpact` is `High`** (a run may deploy), so the default `$ConfirmPreference` prompts before
+> queuing. **Always pass `-Confirm:$false` in scripts and agent runs**, otherwise the call waits on a prompt.
+> Use `-WhatIf` to simulate.
+
 | Parameter | Required | Default | Notes |
 |-----------|----------|---------|-------|
 | `-PipelineId` | ✅ | - | - |

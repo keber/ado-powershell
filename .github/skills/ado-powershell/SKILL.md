@@ -149,7 +149,7 @@ Full docs: [references/base.md](references/base.md)
 |----------|-------------|
 | `Get-AdoPipelines` | List pipelines in the project |
 | `Get-AdoPipelineRuns -PipelineId <n>` | Recent runs (filterable by branch/state/result/date) |
-| `Invoke-AdoPipelineRun -PipelineId <n>` | 🔴 Trigger a run (supports branch, variables, template params) |
+| `Invoke-AdoPipelineRun -PipelineId <n>` | 🔴 Trigger a run (supports branch, variables, template params) - always pass `-Confirm:$false` in scripts |
 
 ### 🔵 Git & Iterations   ·   [references/git.md](references/git.md)
 
