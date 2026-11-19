@@ -38,9 +38,9 @@ Describe 'H3 - Test suite / test case listing must not swallow auth errors' {
         { Get-AdoTestCases -PlanId 1 -SuiteId 2 } | Should -Throw '*403*'
     }
 
-    It 'Get-AdoTestSuites still falls back across endpoint shapes on 404 (guard)' {
+    It 'Get-AdoTestSuites tries all 4 endpoint shapes on 404, then throws a clear error' {
         Mock Invoke-AdoGet { throw '404 Not Found - resource not found: x' }
-        { Get-AdoTestSuites -PlanId 1 } | Should -Not -Throw
+        { Get-AdoTestSuites -PlanId 1 } | Should -Throw '*404*'
         Should -Invoke Invoke-AdoGet -Times 4 -Exactly
     }
 
@@ -55,9 +55,9 @@ Describe 'H3 - Test suite / test case listing must not swallow auth errors' {
         Should -Invoke Invoke-AdoGet -Times 1 -Exactly
     }
 
-    It 'Get-AdoTestCases still falls back across all 5 shapes on 404 (guard)' {
+    It 'Get-AdoTestCases tries all 5 endpoint shapes on 404, then throws a clear error' {
         Mock Invoke-AdoGet { throw '404 Not Found - resource not found: x' }
-        { Get-AdoTestCases -PlanId 1 -SuiteId 2 } | Should -Not -Throw
+        { Get-AdoTestCases -PlanId 1 -SuiteId 2 } | Should -Throw '*404*'
         Should -Invoke Invoke-AdoGet -Times 5 -Exactly
     }
 
@@ -71,11 +71,15 @@ Describe 'H3 - Test suite / test case listing must not swallow auth errors' {
         (Get-AdoTestSuites -PlanId 1).id | Should -Be 7
     }
 
-    It 'Get-AdoTestSuites returns an array (not $null) when every shape is 404' {
+    It 'Get-AdoTestSuites error on all-404 names the plan and hints at PlanId/project' {
         Mock Invoke-AdoGet { throw '404 Not Found - x' }
-        $r = Get-AdoTestSuites -PlanId 1 -WarningAction SilentlyContinue
-        $null -ne $r | Should -BeTrue
-        @($r).Count | Should -Be 0
+        { Get-AdoTestSuites -PlanId 42 } | Should -Throw '*plan 42*Check PlanId*'
+    }
+
+    It 'Get-AdoTestSuites does not warn when a call succeeded with an empty value' {
+        Mock Invoke-AdoGet { [pscustomobject]@{ value = @() } }
+        $null = Get-AdoTestSuites -PlanId 1 -WarningVariable w -WarningAction SilentlyContinue
+        @($w).Count | Should -Be 0
     }
 
     It 'Get-AdoTestSuites returns an empty array (not $null) when value is empty' {

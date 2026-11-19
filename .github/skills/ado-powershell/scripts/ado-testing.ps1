@@ -70,8 +70,9 @@ function Get-AdoTestSuites {
         3. /_apis/testplan/Plans/{planId}/Suites?api-version={v}-preview.1
         4. /_apis/testplan/Plans/{planId}/Suites?api-version={v}
       Only a 404 (shape not available) moves on to the next URL; any other error
-      (401/403/400/5xx) is rethrown. If every shape returns 404 a warning is emitted
-      and an empty array is returned. Always returns an array, never $null.
+      (401/403/400/5xx) is rethrown. If every shape returns 404 an error is thrown
+      (usually a wrong PlanId/SuiteId or project). A successful call with an empty
+      value returns an empty array (never $null).
     #>
     param(
         [Parameter(Mandatory)][int]$PlanId,
@@ -88,6 +89,7 @@ function Get-AdoTestSuites {
         "$base/_apis/testplan/Plans/$PlanId/Suites?api-version=$ApiV"
     )
     $anyOk = $false
+    $last404 = ''
     foreach ($u in $urls) {
         try {
             $r = Invoke-AdoGet -Uri $u -Headers $Headers -MaxRetries 1
@@ -97,11 +99,13 @@ function Get-AdoTestSuites {
         catch {
             # Only "endpoint shape not available" (404) falls through to the next URL.
             # 401/403/400/5xx etc. must surface so callers can tell "failed" from "empty".
-            if ("$_" -match '^\s*404\b') { continue }
+            if ("$_" -match '^\s*404\b') { $last404 = "$_"; continue }
             throw
         }
     }
-    if (-not $anyOk) { Write-Warning "Get-AdoTestSuites: no endpoint shape was available (all returned 404) for plan $PlanId." }
+    if (-not $anyOk) {
+        throw "Get-AdoTestSuites: plan $PlanId not found or no supported endpoint (all URL shapes returned 404). Check PlanId and project. Last error: $last404"
+    }
     return ,@()
 }
 
@@ -117,8 +121,9 @@ function Get-AdoTestCases {
         4. /_apis/testplan/Plans/{planId}/Suites/{suiteId}/TestCases?api-version={v}
         5. /_apis/test/suites/{suiteId}/testcases  (legacy fallback)
       Only a 404 (shape not available) moves on to the next URL; any other error
-      (401/403/400/5xx) is rethrown. If every shape returns 404 a warning is emitted
-      and an empty array is returned. Always returns an array, never $null.
+      (401/403/400/5xx) is rethrown. If every shape returns 404 an error is thrown
+      (usually a wrong PlanId/SuiteId or project). A successful call with an empty
+      value returns an empty array (never $null).
       Returns the raw value array; shape normalisation (testCase.id vs workItem.id)
       is the responsibility of the caller.
     #>
@@ -139,6 +144,7 @@ function Get-AdoTestCases {
         "$base/_apis/test/suites/$SuiteId/testcases?api-version=$ApiV"
     )
     $anyOk = $false
+    $last404 = ''
     foreach ($u in $urls) {
         try {
             $r = Invoke-AdoGet -Uri $u -Headers $Headers -MaxRetries 1
@@ -148,11 +154,13 @@ function Get-AdoTestCases {
         catch {
             # Only "endpoint shape not available" (404) falls through to the next URL.
             # 401/403/400/5xx etc. must surface so callers can tell "failed" from "empty".
-            if ("$_" -match '^\s*404\b') { continue }
+            if ("$_" -match '^\s*404\b') { $last404 = "$_"; continue }
             throw
         }
     }
-    if (-not $anyOk) { Write-Warning "Get-AdoTestCases: no endpoint shape was available (all returned 404) for plan $PlanId suite $SuiteId." }
+    if (-not $anyOk) {
+        throw "Get-AdoTestCases: plan $PlanId / suite $SuiteId not found or no supported endpoint (all URL shapes returned 404). Check PlanId, SuiteId and project. Last error: $last404"
+    }
     return ,@()
 }
 
