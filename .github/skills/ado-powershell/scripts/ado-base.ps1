@@ -450,9 +450,21 @@ function Invoke-AdoGetPaged {
                 if ($status -eq 403) { throw "403 Forbidden - PAT does not have sufficient permissions for: $pageUri" }
                 if ($status -eq 400) {
                     $body400 = ''
+                    # PS 5.1 and 7 populate ErrorDetails.Message; GetResponseStream is 5.1 only.
+                    if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+                        $body400 = [string]$_.ErrorDetails.Message
+                    } else {
+                        try {
+                            $reader400 = [System.IO.StreamReader]::new($_.Exception.Response.GetResponseStream())
+                            $body400   = $reader400.ReadToEnd()
+                        } catch { }
+                    }
+                    # If the body is JSON with a "message" property, surface that message.
                     try {
-                        $reader400 = [System.IO.StreamReader]::new($_.Exception.Response.GetResponseStream())
-                        $body400   = $reader400.ReadToEnd()
+                        $json400 = $body400 | ConvertFrom-Json -ErrorAction Stop
+                        if ($json400 -and $json400.PSObject.Properties['message'] -and $json400.message) {
+                            $body400 = [string]$json400.message
+                        }
                     } catch { }
                     throw "400 Bad Request - $pageUri`n$body400"
                 }

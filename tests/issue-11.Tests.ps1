@@ -142,6 +142,24 @@ Describe 'M4 - Invoke-AdoGetPaged: encoding and sign-in page' {
     }
 }
 
+Describe 'M4 - Invoke-AdoGetPaged: 400 body on PowerShell 7 (ErrorDetails)' {
+    BeforeAll { Mock Start-Sleep { } }
+
+    It 'surfaces the JSON message from ErrorDetails and keeps the 400 prefix' {
+        Mock Invoke-WebRequest {
+            $ex = [System.Exception]::new('Response status code does not indicate success: 400 (Bad Request).')
+            $ex | Add-Member -NotePropertyName Response -NotePropertyValue ([pscustomobject]@{ StatusCode = 400 })
+            $er = [System.Management.Automation.ErrorRecord]::new($ex, 'WebCmdletWebResponseException', 'InvalidOperation', $null)
+            $er.ErrorDetails = [System.Management.Automation.ErrorDetails]::new('{"message":"TF401320: Rule Error for field Title"}')
+            throw $er
+        }
+        $err = try { Invoke-AdoGetPaged -Uri 'https://dev.azure.com/o/_apis/x?api-version=7.1' -Headers $script:FakeHeaders } catch { $_ }
+        "$err" | Should -Match '^400 Bad Request - '
+        "$err" | Should -Match 'TF401320'
+        "$err" | Should -Not -Match '"message"'
+    }
+}
+
 Describe 'M4 - Get-AdoWorkItemRevisions loops with $skip' {
     BeforeAll {
         Mock Start-Sleep { }
