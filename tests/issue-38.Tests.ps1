@@ -444,7 +444,10 @@ Describe 'Issue 38 - Read session (write guard from #18)' {
             ForEach-Object Name
         $covered = 'New-AdoPullRequest', 'Set-AdoPullRequest', 'Stop-AdoPullRequest', 'Restore-AdoPullRequest',
                    'Complete-AdoPullRequest', 'Set-AdoPullRequestAutoComplete', 'Add-AdoPullRequestReviewer',
-                   'Remove-AdoPullRequestReviewer', 'Set-AdoPullRequestVote', 'Approve-AdoPullRequest'
+                   'Remove-AdoPullRequestReviewer', 'Set-AdoPullRequestVote', 'Approve-AdoPullRequest',
+                   # covered by 'Issue 38 - Read session: threads, inspection and metadata'
+                   'New-AdoPullRequestThread', 'Add-AdoPullRequestComment', 'Set-AdoPullRequestThreadStatus',
+                   'Add-AdoPullRequestLabel', 'Remove-AdoPullRequestLabel', 'New-AdoPullRequestStatus'
         @($writers | Where-Object { $_ -notin $covered }) | Should -BeNullOrEmpty
     }
 }
@@ -453,5 +456,254 @@ Describe 'Issue 38 - load.ps1' {
     It 'load.ps1 dot-sources ado-pullrequests.ps1' {
         $load = Get-Content -Raw -LiteralPath (Join-Path $script:SkillRoot 'load.ps1')
         $load | Should -Match 'scripts/ado-pullrequests\.ps1'
+    }
+}
+
+Describe 'Issue 38 - threads and comments' {
+    BeforeEach {
+        $script:AdoSession = New-PrSession
+        $script:Calls = [System.Collections.Generic.List[object]]::new()
+        Mock Invoke-RestMethod { Invoke-FakeAdo $Method $Uri $Body }
+        Mock Write-Host { }
+    }
+
+    It 'Get-AdoPullRequestThreads GETs threads with optional iteration filters' {
+        Get-AdoPullRequestThreads -RepoId 'MyRepo' -PullRequestId 42 -Iteration 3 -BaseIteration 1 | Out-Null
+        $u = (Get-Call GET)[0].Uri
+        $u | Should -Match '^https://dev\.azure\.com/fakeorg/fakeproj/_apis/git/repositories/MyRepo/pullrequests/42/threads\?api-version=7\.1'
+        $u | Should -Match '\$iteration=3'
+        $u | Should -Match '\$baseIteration=1'
+    }
+
+    It 'New-AdoPullRequestThread posts a general comment thread' {
+        New-AdoPullRequestThread -RepoId 'MyRepo' -PullRequestId 42 -Content 'Looks good' -Confirm:$false | Out-Null
+        $c = (Get-Call POST)[0]
+        $c.Uri | Should -Be "$script:PrBase/threads?api-version=7.1"
+        $b = $c.Body | ConvertFrom-Json
+        $b.status | Should -Be 'active'
+        @($b.comments).Count            | Should -Be 1
+        $b.comments[0].content          | Should -Be 'Looks good'
+        $b.comments[0].parentCommentId  | Should -Be 0
+        $b.comments[0].commentType      | Should -Be 'text'
+        $b.PSObject.Properties.Name     | Should -Not -Contain 'threadContext'
+    }
+
+    It 'New-AdoPullRequestThread anchors to a file and line range (right side)' {
+        New-AdoPullRequestThread -RepoId 'MyRepo' -PullRequestId 42 -Content 'nit' -FilePath 'src/app.ps1' `
+            -Line 10 -EndLine 12 -Status pending -Confirm:$false | Out-Null
+        $b = (Get-Call POST)[0].Body | ConvertFrom-Json
+        $b.status | Should -Be 'pending'
+        $b.threadContext.filePath              | Should -Be '/src/app.ps1'
+        $b.threadContext.rightFileStart.line   | Should -Be 10
+        $b.threadContext.rightFileEnd.line     | Should -Be 12
+        $b.threadContext.rightFileStart.offset | Should -Be 1
+        $b.threadContext.PSObject.Properties.Name | Should -Not -Contain 'leftFileStart'
+    }
+
+    It 'New-AdoPullRequestThread -Side Left anchors on the left file' {
+        New-AdoPullRequestThread -RepoId 'MyRepo' -PullRequestId 42 -Content 'old' -FilePath '/a.txt' -Line 3 -Side Left -Confirm:$false | Out-Null
+        $b = (Get-Call POST)[0].Body | ConvertFrom-Json
+        $b.threadContext.filePath           | Should -Be '/a.txt'
+        $b.threadContext.leftFileStart.line | Should -Be 3
+        $b.threadContext.leftFileEnd.line   | Should -Be 3
+    }
+
+    It 'New-AdoPullRequestThread requires -FilePath when -Line is given' {
+        { New-AdoPullRequestThread -RepoId 'MyRepo' -PullRequestId 42 -Content 'x' -Line 3 -Confirm:$false } | Should -Throw '*FilePath*'
+    }
+
+    It 'New-AdoPullRequestThread rejects an undocumented status' {
+        { New-AdoPullRequestThread -RepoId 'MyRepo' -PullRequestId 42 -Content 'x' -Status resolved -Confirm:$false } | Should -Throw
+    }
+
+    It 'Add-AdoPullRequestComment replies in a thread' {
+        Add-AdoPullRequestComment -RepoId 'MyRepo' -PullRequestId 42 -ThreadId 7 -Content 'Done' -ParentCommentId 1 -Confirm:$false | Out-Null
+        $c = (Get-Call POST)[0]
+        $c.Uri | Should -Be "$script:PrBase/threads/7/comments?api-version=7.1"
+        $b = $c.Body | ConvertFrom-Json
+        $b.content         | Should -Be 'Done'
+        $b.parentCommentId | Should -Be 1
+        $b.commentType     | Should -Be 'text'
+    }
+
+    It 'Set-AdoPullRequestThreadStatus -Status <S> PATCHes the thread' -ForEach @(
+        @{ S = 'active' }, @{ S = 'fixed' }, @{ S = 'wontFix' }, @{ S = 'closed' }, @{ S = 'byDesign' }, @{ S = 'pending' }
+    ) {
+        Set-AdoPullRequestThreadStatus -RepoId 'MyRepo' -PullRequestId 42 -ThreadId 7 -Status $S -Confirm:$false | Out-Null
+        $c = (Get-Call PATCH)[0]
+        $c.Uri | Should -Be "$script:PrBase/threads/7?api-version=7.1"
+        ($c.Body | ConvertFrom-Json).status | Should -BeExactly $S
+    }
+}
+
+Describe 'Issue 38 - inspection' {
+    BeforeEach {
+        $script:AdoSession = New-PrSession
+        $script:Calls = [System.Collections.Generic.List[object]]::new()
+        Mock Invoke-RestMethod { Invoke-FakeAdo $Method $Uri $Body }
+    }
+
+    It 'Get-AdoPullRequestIterations GETs iterations (includeCommits optional)' {
+        Get-AdoPullRequestIterations -RepoId 'MyRepo' -PullRequestId 42 -IncludeCommits | Out-Null
+        (Get-Call GET)[0].Uri | Should -Be "$script:PrBase/iterations?api-version=7.1&includeCommits=true"
+    }
+
+    It 'Get-AdoPullRequestChanges follows nextSkip/nextTop paging' {
+        $script:Page = 0
+        Mock Invoke-RestMethod {
+            Invoke-FakeAdo $Method $Uri $Body | Out-Null
+            $script:Page++
+            if ($script:Page -eq 1) { [pscustomobject]@{ changeEntries = @(1, 2 | ForEach-Object { [pscustomobject]@{ changeId = $_ } }); nextSkip = 2; nextTop = 2 } }
+            else                    { [pscustomobject]@{ changeEntries = @([pscustomobject]@{ changeId = 3 }); nextSkip = 0; nextTop = 0 } }
+        }
+        $r = Get-AdoPullRequestChanges -RepoId 'MyRepo' -PullRequestId 42 -IterationId 2 -CompareTo 1 -PageSize 2
+        @($r).Count | Should -Be 3
+        $g = Get-Call GET
+        $g[0].Uri | Should -Match '/pullrequests/42/iterations/2/changes\?api-version=7\.1'
+        $g[0].Uri | Should -Match '\$top=2'
+        $g[0].Uri | Should -Match '\$skip=0'
+        $g[0].Uri | Should -Match '\$compareTo=1'
+        $g[1].Uri | Should -Match '\$skip=2'
+    }
+
+    It 'Get-AdoPullRequestChanges without -IterationId uses the latest iteration' {
+        Mock Invoke-RestMethod {
+            Invoke-FakeAdo $Method $Uri $Body | Out-Null
+            if ($Uri.OriginalString -match '/iterations\?') {
+                return [pscustomobject]@{ value = @([pscustomobject]@{ id = 1 }, [pscustomobject]@{ id = 3 }, [pscustomobject]@{ id = 2 }) }
+            }
+            [pscustomobject]@{ changeEntries = @(); nextSkip = 0; nextTop = 0 }
+        }
+        Get-AdoPullRequestChanges -RepoId 'MyRepo' -PullRequestId 42 | Out-Null
+        (Get-Call GET)[1].Uri | Should -Match '/iterations/3/changes\?'
+    }
+
+    It 'Get-AdoPullRequestChanges rejects a page size above 2000' {
+        { Get-AdoPullRequestChanges -RepoId 'MyRepo' -PullRequestId 42 -IterationId 1 -PageSize 2001 } | Should -Throw
+    }
+
+    It 'Get-AdoPullRequestCommits follows the continuation token' {
+        $script:Page = 0
+        Mock Invoke-WebRequest {
+            Invoke-FakeAdo 'GET' $Uri $null | Out-Null
+            $script:Page++
+            if ($script:Page -eq 1) { [pscustomobject]@{ Content = '{"value":[{"commitId":"a"}]}'; Headers = @{ 'x-ms-continuationtoken' = 'tok1' } } }
+            else                    { [pscustomobject]@{ Content = '{"value":[{"commitId":"b"}]}'; Headers = @{} } }
+        }
+        $r = Get-AdoPullRequestCommits -RepoId 'MyRepo' -PullRequestId 42
+        @($r.commitId) | Should -Be @('a', 'b')
+        $g = Get-Call GET
+        $g[0].Uri | Should -Be "$script:PrBase/commits?api-version=7.1"
+        $g[1].Uri | Should -Match 'continuationToken=tok1'
+    }
+
+    It 'Get-AdoPullRequestCommits -Top caps the result' {
+        Mock Invoke-WebRequest {
+            Invoke-FakeAdo 'GET' $Uri $null | Out-Null
+            [pscustomobject]@{ Content = '{"value":[{"commitId":"a"},{"commitId":"b"}]}'; Headers = @{ 'x-ms-continuationtoken' = 'more' } }
+        }
+        @(Get-AdoPullRequestCommits -RepoId 'MyRepo' -PullRequestId 42 -Top 1).Count | Should -Be 1
+    }
+
+    It 'Get-AdoPullRequestWorkItems GETs the linked work items' {
+        Get-AdoPullRequestWorkItems -RepoId 'MyRepo' -PullRequestId 42 | Out-Null
+        (Get-Call GET)[0].Uri | Should -Be "$script:PrBase/workitems?api-version=7.1"
+    }
+}
+
+Describe 'Issue 38 - labels and statuses' {
+    BeforeEach {
+        $script:AdoSession = New-PrSession
+        $script:Calls = [System.Collections.Generic.List[object]]::new()
+        Mock Invoke-RestMethod { Invoke-FakeAdo $Method $Uri $Body }
+        Mock Write-Host { }
+    }
+
+    It 'Get-AdoPullRequestLabels GETs labels' {
+        Get-AdoPullRequestLabels -RepoId 'MyRepo' -PullRequestId 42 | Out-Null
+        (Get-Call GET)[0].Uri | Should -Be "$script:PrBase/labels?api-version=7.1"
+    }
+
+    It 'Add-AdoPullRequestLabel POSTs {name}' {
+        Add-AdoPullRequestLabel -RepoId 'MyRepo' -PullRequestId 42 -Name 'needs-review' -Confirm:$false | Out-Null
+        $c = (Get-Call POST)[0]
+        $c.Uri | Should -Be "$script:PrBase/labels?api-version=7.1"
+        ($c.Body | ConvertFrom-Json).name | Should -Be 'needs-review'
+    }
+
+    It 'Remove-AdoPullRequestLabel DELETEs the escaped label name' {
+        Remove-AdoPullRequestLabel -RepoId 'MyRepo' -PullRequestId 42 -Name 'needs review' -Confirm:$false | Out-Null
+        (Get-Call DELETE)[0].Uri | Should -Be "$script:PrBase/labels/needs%20review?api-version=7.1"
+    }
+
+    It 'Get-AdoPullRequestStatuses GETs statuses' {
+        Get-AdoPullRequestStatuses -RepoId 'MyRepo' -PullRequestId 42 | Out-Null
+        (Get-Call GET)[0].Uri | Should -Be "$script:PrBase/statuses?api-version=7.1"
+    }
+
+    It 'New-AdoPullRequestStatus POSTs the documented status shape' {
+        New-AdoPullRequestStatus -RepoId 'MyRepo' -PullRequestId 42 -State succeeded -ContextName 'qa/smoke' `
+            -ContextGenre 'qa' -Description 'Smoke passed' -TargetUrl 'https://ci.example/run/1' -IterationId 2 -Confirm:$false | Out-Null
+        $c = (Get-Call POST)[0]
+        $c.Uri | Should -Be "$script:PrBase/statuses?api-version=7.1"
+        $b = $c.Body | ConvertFrom-Json
+        $b.state         | Should -Be 'succeeded'
+        $b.context.name  | Should -Be 'qa/smoke'
+        $b.context.genre | Should -Be 'qa'
+        $b.description   | Should -Be 'Smoke passed'
+        $b.targetUrl     | Should -Be 'https://ci.example/run/1'
+        $b.iterationId   | Should -Be 2
+    }
+
+    It 'New-AdoPullRequestStatus omits optional fields and rejects an unknown state' {
+        New-AdoPullRequestStatus -RepoId 'MyRepo' -PullRequestId 42 -State pending -ContextName 'c' -Confirm:$false | Out-Null
+        $b = (Get-Call POST)[0].Body | ConvertFrom-Json
+        $b.PSObject.Properties.Name         | Should -Not -Contain 'iterationId'
+        $b.PSObject.Properties.Name         | Should -Not -Contain 'targetUrl'
+        $b.context.PSObject.Properties.Name | Should -Not -Contain 'genre'
+        { New-AdoPullRequestStatus -RepoId 'MyRepo' -PullRequestId 42 -State passed -ContextName 'c' -Confirm:$false } | Should -Throw
+    }
+}
+
+Describe 'Issue 38 - Read session: threads, inspection and metadata' {
+    BeforeEach {
+        $script:AdoSession = New-PrSession -Access 'Read'
+        $script:Calls = [System.Collections.Generic.List[object]]::new()
+        Mock Invoke-RestMethod { Invoke-FakeAdo $Method $Uri $Body }
+        Mock Invoke-WebRequest {
+            Invoke-FakeAdo 'GET' $Uri $null | Out-Null
+            [pscustomobject]@{ Content = '{"value":[]}'; Headers = @{} }
+        }
+        Mock Write-Host { }
+    }
+
+    It 'write function <Name> is refused and sends no write' -ForEach @(
+        @{ Name = 'New-AdoPullRequestThread';       Params = @{ RepoId = 'MyRepo'; PullRequestId = 42; Content = 'c' } }
+        @{ Name = 'Add-AdoPullRequestComment';      Params = @{ RepoId = 'MyRepo'; PullRequestId = 42; ThreadId = 1; Content = 'c' } }
+        @{ Name = 'Set-AdoPullRequestThreadStatus'; Params = @{ RepoId = 'MyRepo'; PullRequestId = 42; ThreadId = 1; Status = 'fixed' } }
+        @{ Name = 'Add-AdoPullRequestLabel';        Params = @{ RepoId = 'MyRepo'; PullRequestId = 42; Name = 'l' } }
+        @{ Name = 'Remove-AdoPullRequestLabel';     Params = @{ RepoId = 'MyRepo'; PullRequestId = 42; Name = 'l' } }
+        @{ Name = 'New-AdoPullRequestStatus';       Params = @{ RepoId = 'MyRepo'; PullRequestId = 42; State = 'pending'; ContextName = 'c' } }
+    ) {
+        $a = $Params
+        $err = $null
+        try { & $Name @a -Confirm:$false } catch { $err = $_ }
+        $err.FullyQualifiedErrorId | Should -Match 'AdoReadOnlySession'
+        @($script:Calls | Where-Object { $_.Method -ne 'GET' }).Count | Should -Be 0
+    }
+
+    It 'read function <Name> works' -ForEach @(
+        @{ Name = 'Get-AdoPullRequestThreads';    Params = @{ RepoId = 'MyRepo'; PullRequestId = 42 } }
+        @{ Name = 'Get-AdoPullRequestIterations'; Params = @{ RepoId = 'MyRepo'; PullRequestId = 42 } }
+        @{ Name = 'Get-AdoPullRequestChanges';    Params = @{ RepoId = 'MyRepo'; PullRequestId = 42; IterationId = 1 } }
+        @{ Name = 'Get-AdoPullRequestCommits';    Params = @{ RepoId = 'MyRepo'; PullRequestId = 42 } }
+        @{ Name = 'Get-AdoPullRequestWorkItems';  Params = @{ RepoId = 'MyRepo'; PullRequestId = 42 } }
+        @{ Name = 'Get-AdoPullRequestLabels';     Params = @{ RepoId = 'MyRepo'; PullRequestId = 42 } }
+        @{ Name = 'Get-AdoPullRequestStatuses';   Params = @{ RepoId = 'MyRepo'; PullRequestId = 42 } }
+    ) {
+        $a = $Params
+        { & $Name @a } | Should -Not -Throw
+        $script:Calls.Count | Should -BeGreaterThan 0
+        @($script:Calls | Where-Object { $_.Method -ne 'GET' }).Count | Should -Be 0
     }
 }

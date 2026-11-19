@@ -2,7 +2,8 @@
 .SYNOPSIS
   Pull request operations on Azure DevOps REST API (Git, api-version 7.1).
   Covers listing, creating, editing, abandoning, reactivating, completing and auto-completing
-  pull requests, and reviewers / votes.
+  pull requests; reviewers / votes; comment threads; iterations, changes, commits and linked
+  work items; labels and statuses.
 
 .PREREQUISITE
   Dot-source ado-base.ps1 first and call Initialize-AdoSession.
@@ -93,6 +94,17 @@ function Get-AdoCurrentUserId {
         $session | Add-Member -NotePropertyName AuthenticatedUserId -NotePropertyValue $id -Force
     }
     return $id
+}
+
+function Get-AdoValueList {
+    <#
+    .SYNOPSIS  Internal: returns the 'value' array of a list response, or an empty array (StrictMode safe).
+    #>
+    param([Parameter(Position = 0)][AllowNull()][object]$Response)
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    $vp = if ($null -ne $Response) { $Response.PSObject.Properties['value'] } else { $null }
+    if ($vp -and $null -ne $vp.Value) { return @($vp.Value) }
+    return @()
 }
 
 function Invoke-AdoGetSkipPaged {
@@ -510,11 +522,8 @@ function Get-AdoPullRequestReviewers {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    $uri = "$(Get-AdoPullRequestRepoUri -RepoId $RepoId -Org $Org -Project $Project)/pullrequests/$PullRequestId/reviewers?api-version=$ApiV"
-    $r = Invoke-AdoGet -Uri $uri -Headers $Headers
-    $vp = if ($null -ne $r) { $r.PSObject.Properties['value'] } else { $null }
-    if ($vp) { return @($vp.Value) }
-    return @()
+    $uri = Get-AdoPullRequestUri -RepoId $RepoId -PullRequestId $PullRequestId -SubPath 'reviewers' -Org $Org -Project $Project -ApiV $ApiV
+    return Get-AdoValueList (Invoke-AdoGet -Uri $uri -Headers $Headers)
 }
 
 function Add-AdoPullRequestReviewer {
@@ -609,6 +618,377 @@ function Approve-AdoPullRequest {
     # WhatIf / Confirm propagate automatically via $WhatIfPreference / $ConfirmPreference
     return Set-AdoPullRequestVote -RepoId $RepoId -PullRequestId $PullRequestId -Vote Approve `
         -Org $Org -Project $Project -ApiV $ApiV -Headers $Headers
+}
+
+#endregion
+
+#region -- Threads and comments --
+
+function Get-AdoPullRequestThreads {
+    <#
+    .SYNOPSIS  Lists the comment threads of a pull request.
+    .PARAMETER Iteration      Only threads as of this iteration ($iteration).
+    .PARAMETER BaseIteration  Compare against this base iteration ($baseIteration).
+    .EXAMPLE
+      Get-AdoPullRequestThreads -RepoId 'MyRepo' -PullRequestId 42 |
+          Where-Object { $_.PSObject.Properties['status'] -and $_.status -eq 'active' }
+    #>
+    param(
+        [Parameter(Mandatory)][string]$RepoId,
+        [Parameter(Mandatory)][int]$PullRequestId,
+        [int]$Iteration     = 0,
+        [int]$BaseIteration = 0,
+        [string]$Org     = $script:AdoSession.Org,
+        [string]$Project = $script:AdoSession.Project,
+        [string]$ApiV    = $script:AdoSession.ApiV,
+        [hashtable]$Headers = $script:AdoSession.Headers
+    )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    $uri = Get-AdoPullRequestUri -RepoId $RepoId -PullRequestId $PullRequestId -SubPath 'threads' -Org $Org -Project $Project -ApiV $ApiV
+    if ($Iteration -gt 0)     { $uri += "&`$iteration=$Iteration" }
+    if ($BaseIteration -gt 0) { $uri += "&`$baseIteration=$BaseIteration" }
+    return Get-AdoValueList (Invoke-AdoGet -Uri $uri -Headers $Headers)
+}
+
+function New-AdoPullRequestThread {
+    <#
+    .SYNOPSIS  Starts a comment thread: general, or anchored to a file and line range.
+    .PARAMETER Status    Thread status: active (default) | fixed | wontFix | closed | byDesign | pending.
+    .PARAMETER FilePath  Repository path of the file ('src/app.ps1' or '/src/app.ps1').
+    .PARAMETER Line      First line (1-based) of the anchor. Requires -FilePath.
+    .PARAMETER EndLine   Last line of the anchor (default: -Line).
+    .PARAMETER Side      Right (default; the PR's version of the file) or Left (the target's version).
+    .EXAMPLE   New-AdoPullRequestThread -RepoId 'MyRepo' -PullRequestId 42 -Content 'Please add a test'
+    .EXAMPLE   New-AdoPullRequestThread -RepoId 'MyRepo' -PullRequestId 42 -Content 'Off by one?' -FilePath 'src/calc.ps1' -Line 18
+    #>
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact='Low')]
+    param(
+        [Parameter(Mandatory)][string]$RepoId,
+        [Parameter(Mandatory)][int]$PullRequestId,
+        [Parameter(Mandatory)][string]$Content,
+        [ValidateSet('active', 'fixed', 'wontFix', 'closed', 'byDesign', 'pending')]
+        [string]$Status = 'active',
+        [string]$FilePath = '',
+        [int]$Line    = 0,
+        [int]$EndLine = 0,
+        [ValidateSet('Right', 'Left')]
+        [string]$Side = 'Right',
+        [string]$Org     = $script:AdoSession.Org,
+        [string]$Project = $script:AdoSession.Project,
+        [string]$ApiV    = $script:AdoSession.ApiV,
+        [hashtable]$Headers = $script:AdoSession.Headers
+    )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    if ($Line -gt 0 -and -not $FilePath) { throw 'New-AdoPullRequestThread: -Line requires -FilePath.' }
+
+    $body = [ordered]@{
+        comments = @(@{ parentCommentId = 0; content = $Content; commentType = 'text' })
+        status   = $Status
+    }
+    if ($FilePath) {
+        $path = if ($FilePath.StartsWith('/')) { $FilePath } else { "/$FilePath" }
+        $ctx  = [ordered]@{ filePath = $path }
+        if ($Line -gt 0) {
+            $last = if ($EndLine -ge $Line) { $EndLine } else { $Line }
+            $side = $Side.ToLowerInvariant()
+            $ctx["${side}FileStart"] = @{ line = $Line; offset = 1 }
+            $ctx["${side}FileEnd"]   = @{ line = $last; offset = 1 }
+        }
+        $body.threadContext = $ctx
+    }
+
+    $uri = Get-AdoPullRequestUri -RepoId $RepoId -PullRequestId $PullRequestId -SubPath 'threads' -Org $Org -Project $Project -ApiV $ApiV
+    $target = if ($FilePath) { "$FilePath$(if ($Line -gt 0) { ":$Line" })" } else { 'general' }
+    if (-not $PSCmdlet.ShouldProcess("PR #$PullRequestId", "POST - New $Status thread ($target)")) { return $null }
+    return Invoke-AdoRequest -Method POST -Uri $uri -Body ($body | ConvertTo-Json -Depth 6) -Headers $Headers
+}
+
+function Add-AdoPullRequestComment {
+    <#
+    .SYNOPSIS  Adds a comment (reply) to an existing pull request thread.
+    .PARAMETER ParentCommentId  Comment being replied to (0 = top level of the thread).
+    .EXAMPLE   Add-AdoPullRequestComment -RepoId 'MyRepo' -PullRequestId 42 -ThreadId 7 -Content 'Fixed' -ParentCommentId 1
+    #>
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact='Low')]
+    param(
+        [Parameter(Mandatory)][string]$RepoId,
+        [Parameter(Mandatory)][int]$PullRequestId,
+        [Parameter(Mandatory)][int]$ThreadId,
+        [Parameter(Mandatory)][string]$Content,
+        [int]$ParentCommentId = 0,
+        [string]$Org     = $script:AdoSession.Org,
+        [string]$Project = $script:AdoSession.Project,
+        [string]$ApiV    = $script:AdoSession.ApiV,
+        [hashtable]$Headers = $script:AdoSession.Headers
+    )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    $uri  = Get-AdoPullRequestUri -RepoId $RepoId -PullRequestId $PullRequestId -SubPath "threads/$ThreadId/comments" -Org $Org -Project $Project -ApiV $ApiV
+    $body = [ordered]@{ content = $Content; parentCommentId = $ParentCommentId; commentType = 'text' }
+    if (-not $PSCmdlet.ShouldProcess("PR #$PullRequestId thread $ThreadId", 'POST - Add comment')) { return $null }
+    return Invoke-AdoRequest -Method POST -Uri $uri -Body ($body | ConvertTo-Json) -Headers $Headers
+}
+
+function Set-AdoPullRequestThreadStatus {
+    <#
+    .SYNOPSIS  Changes a thread's status (resolve, reopen, won't fix...).
+    .PARAMETER Status  active | fixed | wontFix | closed | byDesign | pending.
+    .EXAMPLE   Set-AdoPullRequestThreadStatus -RepoId 'MyRepo' -PullRequestId 42 -ThreadId 7 -Status fixed
+    #>
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact='Low')]
+    param(
+        [Parameter(Mandatory)][string]$RepoId,
+        [Parameter(Mandatory)][int]$PullRequestId,
+        [Parameter(Mandatory)][int]$ThreadId,
+        [Parameter(Mandatory)]
+        [ValidateSet('active', 'fixed', 'wontFix', 'closed', 'byDesign', 'pending')]
+        [string]$Status,
+        [string]$Org     = $script:AdoSession.Org,
+        [string]$Project = $script:AdoSession.Project,
+        [string]$ApiV    = $script:AdoSession.ApiV,
+        [hashtable]$Headers = $script:AdoSession.Headers
+    )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    # ValidateSet is case-insensitive; send the documented camelCase spelling.
+    $canonical = @('active', 'fixed', 'wontFix', 'closed', 'byDesign', 'pending') | Where-Object { $_ -eq $Status }
+    $uri = Get-AdoPullRequestUri -RepoId $RepoId -PullRequestId $PullRequestId -SubPath "threads/$ThreadId" -Org $Org -Project $Project -ApiV $ApiV
+    if (-not $PSCmdlet.ShouldProcess("PR #$PullRequestId thread $ThreadId", "PATCH - Status $canonical")) { return $null }
+    return Invoke-AdoRequest -Method PATCH -Uri $uri -Body (@{ status = $canonical } | ConvertTo-Json) -Headers $Headers
+}
+
+#endregion
+
+#region -- Inspection --
+
+function Get-AdoPullRequestIterations {
+    <#
+    .SYNOPSIS  Lists the iterations (pushes) of a pull request.
+    .EXAMPLE   Get-AdoPullRequestIterations -RepoId 'MyRepo' -PullRequestId 42 | Select-Object id, description, createdDate
+    #>
+    param(
+        [Parameter(Mandatory)][string]$RepoId,
+        [Parameter(Mandatory)][int]$PullRequestId,
+        [switch]$IncludeCommits,
+        [string]$Org     = $script:AdoSession.Org,
+        [string]$Project = $script:AdoSession.Project,
+        [string]$ApiV    = $script:AdoSession.ApiV,
+        [hashtable]$Headers = $script:AdoSession.Headers
+    )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    $uri = Get-AdoPullRequestUri -RepoId $RepoId -PullRequestId $PullRequestId -SubPath 'iterations' -Org $Org -Project $Project -ApiV $ApiV
+    if ($IncludeCommits) { $uri += '&includeCommits=true' }
+    return Get-AdoValueList (Invoke-AdoGet -Uri $uri -Headers $Headers)
+}
+
+function Get-AdoPullRequestChanges {
+    <#
+    .SYNOPSIS  Lists the files changed in a pull request iteration, following nextSkip/nextTop paging.
+    .PARAMETER IterationId  Iteration to inspect. Default: the latest iteration.
+    .PARAMETER CompareTo    Iteration to compare against (0 = the common commit; API default).
+    .PARAMETER PageSize     Entries per request (1-2000, default 100).
+    .OUTPUTS   The changeEntries of every page.
+    .EXAMPLE   Get-AdoPullRequestChanges -RepoId 'MyRepo' -PullRequestId 42 | ForEach-Object { $_.item.path }
+    #>
+    param(
+        [Parameter(Mandatory)][string]$RepoId,
+        [Parameter(Mandatory)][int]$PullRequestId,
+        [int]$IterationId = 0,
+        [int]$CompareTo   = 0,
+        [ValidateRange(1, 2000)]
+        [int]$PageSize    = 100,
+        [string]$Org     = $script:AdoSession.Org,
+        [string]$Project = $script:AdoSession.Project,
+        [string]$ApiV    = $script:AdoSession.ApiV,
+        [hashtable]$Headers = $script:AdoSession.Headers
+    )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    if ($IterationId -le 0) {
+        $its = @(Get-AdoPullRequestIterations -RepoId $RepoId -PullRequestId $PullRequestId `
+                    -Org $Org -Project $Project -ApiV $ApiV -Headers $Headers)
+        if ($its.Count -eq 0) { throw "Get-AdoPullRequestChanges: PR #$PullRequestId has no iterations." }
+        $IterationId = ($its | ForEach-Object { [int]$_.id } | Measure-Object -Maximum).Maximum
+    }
+
+    $base  = Get-AdoPullRequestUri -RepoId $RepoId -PullRequestId $PullRequestId -SubPath "iterations/$IterationId/changes" -Org $Org -Project $Project -ApiV $ApiV
+    $items = [System.Collections.Generic.List[object]]::new()
+    $skip  = 0
+    $top   = $PageSize
+    while ($true) {
+        $r = Invoke-AdoGet -Uri "$base&`$top=$top&`$skip=$skip&`$compareTo=$CompareTo" -Headers $Headers
+        $ce = if ($null -ne $r) { $r.PSObject.Properties['changeEntries'] } else { $null }
+        if ($ce -and $null -ne $ce.Value) { foreach ($e in @($ce.Value)) { $items.Add($e) } }
+
+        $ns = if ($null -ne $r) { $r.PSObject.Properties['nextSkip'] } else { $null }
+        $nt = if ($null -ne $r) { $r.PSObject.Properties['nextTop'] }  else { $null }
+        $nextSkip = if ($ns -and $ns.Value) { [int]$ns.Value } else { 0 }
+        $nextTop  = if ($nt -and $nt.Value) { [int]$nt.Value } else { 0 }
+        # Both are 0 when there are no more changes; also stop if the server does not advance.
+        if ($nextTop -le 0 -or $nextSkip -le $skip) { break }
+        $skip = $nextSkip
+        $top  = [Math]::Min($nextTop, 2000)
+    }
+    return $items.ToArray()
+}
+
+function Get-AdoPullRequestCommits {
+    <#
+    .SYNOPSIS  Lists the commits of a pull request, following the continuation token.
+    .PARAMETER Top  Maximum number of commits returned (0 = all).
+    .EXAMPLE   Get-AdoPullRequestCommits -RepoId 'MyRepo' -PullRequestId 42 | Select-Object commitId, comment
+    #>
+    param(
+        [Parameter(Mandatory)][string]$RepoId,
+        [Parameter(Mandatory)][int]$PullRequestId,
+        [int]$Top = 0,
+        [string]$Org     = $script:AdoSession.Org,
+        [string]$Project = $script:AdoSession.Project,
+        [string]$ApiV    = $script:AdoSession.ApiV,
+        [hashtable]$Headers = $script:AdoSession.Headers
+    )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    $uri = Get-AdoPullRequestUri -RepoId $RepoId -PullRequestId $PullRequestId -SubPath 'commits' -Org $Org -Project $Project -ApiV $ApiV
+    return Invoke-AdoGetPaged -Uri $uri -Headers $Headers -MaxItems $Top
+}
+
+function Get-AdoPullRequestWorkItems {
+    <#
+    .SYNOPSIS  Lists the work items linked to a pull request (ResourceRef: id, url).
+    .EXAMPLE   Get-AdoPullRequestWorkItems -RepoId 'MyRepo' -PullRequestId 42 | ForEach-Object { Get-AdoWorkItem -Id $_.id }
+    #>
+    param(
+        [Parameter(Mandatory)][string]$RepoId,
+        [Parameter(Mandatory)][int]$PullRequestId,
+        [string]$Org     = $script:AdoSession.Org,
+        [string]$Project = $script:AdoSession.Project,
+        [string]$ApiV    = $script:AdoSession.ApiV,
+        [hashtable]$Headers = $script:AdoSession.Headers
+    )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    $uri = Get-AdoPullRequestUri -RepoId $RepoId -PullRequestId $PullRequestId -SubPath 'workitems' -Org $Org -Project $Project -ApiV $ApiV
+    return Get-AdoValueList (Invoke-AdoGet -Uri $uri -Headers $Headers)
+}
+
+#endregion
+
+#region -- Labels and statuses --
+
+function Get-AdoPullRequestLabels {
+    <#
+    .SYNOPSIS  Lists the labels (tags) of a pull request.
+    .EXAMPLE   Get-AdoPullRequestLabels -RepoId 'MyRepo' -PullRequestId 42 | Select-Object name, active
+    #>
+    param(
+        [Parameter(Mandatory)][string]$RepoId,
+        [Parameter(Mandatory)][int]$PullRequestId,
+        [string]$Org     = $script:AdoSession.Org,
+        [string]$Project = $script:AdoSession.Project,
+        [string]$ApiV    = $script:AdoSession.ApiV,
+        [hashtable]$Headers = $script:AdoSession.Headers
+    )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    $uri = Get-AdoPullRequestUri -RepoId $RepoId -PullRequestId $PullRequestId -SubPath 'labels' -Org $Org -Project $Project -ApiV $ApiV
+    return Get-AdoValueList (Invoke-AdoGet -Uri $uri -Headers $Headers)
+}
+
+function Add-AdoPullRequestLabel {
+    <#
+    .SYNOPSIS  Adds a label to a pull request (the tag is created if it does not exist).
+    .EXAMPLE   Add-AdoPullRequestLabel -RepoId 'MyRepo' -PullRequestId 42 -Name 'needs-qa'
+    #>
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact='Low')]
+    param(
+        [Parameter(Mandatory)][string]$RepoId,
+        [Parameter(Mandatory)][int]$PullRequestId,
+        [Parameter(Mandatory)][string]$Name,
+        [string]$Org     = $script:AdoSession.Org,
+        [string]$Project = $script:AdoSession.Project,
+        [string]$ApiV    = $script:AdoSession.ApiV,
+        [hashtable]$Headers = $script:AdoSession.Headers
+    )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    $uri = Get-AdoPullRequestUri -RepoId $RepoId -PullRequestId $PullRequestId -SubPath 'labels' -Org $Org -Project $Project -ApiV $ApiV
+    if (-not $PSCmdlet.ShouldProcess("PR #$PullRequestId", "POST - Add label '$Name'")) { return $null }
+    return Invoke-AdoRequest -Method POST -Uri $uri -Body (@{ name = $Name } | ConvertTo-Json) -Headers $Headers
+}
+
+function Remove-AdoPullRequestLabel {
+    <#
+    .SYNOPSIS  Removes a label from a pull request (the tag itself is not deleted).
+    .PARAMETER Name  Label name or id.
+    .EXAMPLE   Remove-AdoPullRequestLabel -RepoId 'MyRepo' -PullRequestId 42 -Name 'needs-qa'
+    #>
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact='Medium')]
+    param(
+        [Parameter(Mandatory)][string]$RepoId,
+        [Parameter(Mandatory)][int]$PullRequestId,
+        [Parameter(Mandatory)][string]$Name,
+        [string]$Org     = $script:AdoSession.Org,
+        [string]$Project = $script:AdoSession.Project,
+        [string]$ApiV    = $script:AdoSession.ApiV,
+        [hashtable]$Headers = $script:AdoSession.Headers
+    )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    $uri = Get-AdoPullRequestUri -RepoId $RepoId -PullRequestId $PullRequestId -SubPath "labels/$([uri]::EscapeDataString($Name))" -Org $Org -Project $Project -ApiV $ApiV
+    if (-not $PSCmdlet.ShouldProcess("PR #$PullRequestId", "DELETE - Remove label '$Name'")) { return $null }
+    return Invoke-AdoRequest -Method DELETE -Uri $uri -Headers $Headers
+}
+
+function Get-AdoPullRequestStatuses {
+    <#
+    .SYNOPSIS  Lists the statuses posted on a pull request (CI checks, external tools).
+    .EXAMPLE   Get-AdoPullRequestStatuses -RepoId 'MyRepo' -PullRequestId 42 | Select-Object state, description
+    #>
+    param(
+        [Parameter(Mandatory)][string]$RepoId,
+        [Parameter(Mandatory)][int]$PullRequestId,
+        [string]$Org     = $script:AdoSession.Org,
+        [string]$Project = $script:AdoSession.Project,
+        [string]$ApiV    = $script:AdoSession.ApiV,
+        [hashtable]$Headers = $script:AdoSession.Headers
+    )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    $uri = Get-AdoPullRequestUri -RepoId $RepoId -PullRequestId $PullRequestId -SubPath 'statuses' -Org $Org -Project $Project -ApiV $ApiV
+    return Get-AdoValueList (Invoke-AdoGet -Uri $uri -Headers $Headers)
+}
+
+function New-AdoPullRequestStatus {
+    <#
+    .SYNOPSIS  Posts a status on a pull request (e.g. an external check result).
+    .PARAMETER State         notSet | pending | succeeded | failed | error | notApplicable.
+    .PARAMETER ContextName   Status name; with -ContextGenre it identifies the status.
+    .PARAMETER IterationId   Attach the status to this iteration (optional, >= 1).
+    .EXAMPLE
+      New-AdoPullRequestStatus -RepoId 'MyRepo' -PullRequestId 42 -State succeeded `
+          -ContextGenre 'qa' -ContextName 'smoke' -Description 'Smoke tests passed' -TargetUrl $runUrl
+    #>
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact='Low')]
+    param(
+        [Parameter(Mandatory)][string]$RepoId,
+        [Parameter(Mandatory)][int]$PullRequestId,
+        [Parameter(Mandatory)]
+        [ValidateSet('notSet', 'pending', 'succeeded', 'failed', 'error', 'notApplicable')]
+        [string]$State,
+        [Parameter(Mandatory)][string]$ContextName,
+        [string]$ContextGenre = '',
+        [string]$Description  = '',
+        [string]$TargetUrl    = '',
+        [int]$IterationId     = 0,
+        [string]$Org     = $script:AdoSession.Org,
+        [string]$Project = $script:AdoSession.Project,
+        [string]$ApiV    = $script:AdoSession.ApiV,
+        [hashtable]$Headers = $script:AdoSession.Headers
+    )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    $canonical = @('notSet', 'pending', 'succeeded', 'failed', 'error', 'notApplicable') | Where-Object { $_ -eq $State }
+    $context = [ordered]@{ name = $ContextName }
+    if ($ContextGenre) { $context.genre = $ContextGenre }
+    $body = [ordered]@{ state = $canonical; context = $context }
+    if ($Description)       { $body.description = $Description }
+    if ($TargetUrl)         { $body.targetUrl   = $TargetUrl }
+    if ($IterationId -gt 0) { $body.iterationId = $IterationId }
+
+    $uri = Get-AdoPullRequestUri -RepoId $RepoId -PullRequestId $PullRequestId -SubPath 'statuses' -Org $Org -Project $Project -ApiV $ApiV
+    if (-not $PSCmdlet.ShouldProcess("PR #$PullRequestId", "POST - Status $canonical ($ContextGenre/$ContextName)")) { return $null }
+    return Invoke-AdoRequest -Method POST -Uri $uri -Body ($body | ConvertTo-Json -Depth 4) -Headers $Headers
 }
 
 #endregion
