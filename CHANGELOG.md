@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Pull requests (`scripts/ado-pullrequests.ps1`, loaded by `load.ps1`; docs in
+  `references/pullrequests.md`): list (search criteria, `$top`/`$skip` paging), get, create,
+  edit/publish/retarget, abandon (`Stop-`), reactivate (`Restore-`), complete (fetches
+  `lastMergeSourceCommit`; 409 thrown as `AdoPullRequestConflict`) and auto-complete; reviewers
+  and votes (`Set-AdoPullRequestVote`, `Approve-AdoPullRequest`; the authenticated user id is
+  resolved from `_apis/connectionData` once per session and cached as
+  `$AdoSession.AuthenticatedUserId` for the session credential only); comment threads;
+  iterations, changes (`nextSkip` paging), commits (continuation token) and linked work items;
+  labels and statuses. Every write uses `SupportsShouldProcess` (pre-flight reads happen after
+  it, so `-WhatIf` sends nothing) and is refused on a `-Access Read` session. (#38)
 - Read/write credential split: `Initialize-AdoSession -Access Read|Write` (default `Write`, the
   previous behaviour) resolves `ADO_PROJECT_<ACCESS>` / `ADO_PAT_<ACCESS>` before `ADO_PROJECT` /
   `ADO_PAT` / `AZURE_DEVOPS_EXT_PAT`. The session records `Access` and `AuthScheme`. On a `Read`
@@ -45,6 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   include a legacy `pat`) in its warning; it reports the path and error type only. (#18)
 - Whitespace-only `-Pat` / `-Token` / credential variables are treated as absent, so the
   session's `AuthScheme` always matches the header sent. (#18)
+- `Invoke-AdoRequest` / `Invoke-AdoGetPaged`: a 409 Conflict is no longer retried for GET, PUT,
+  DELETE or `-RetryNonIdempotent` requests; the original error (status and server message) is
+  rethrown. (#38)
 
 ---
 
