@@ -23,8 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SYSTEM_ACCESSTOKEN` is also used automatically when no PAT is set; PAT variables keep
   precedence otherwise. (#18)
 - Conditional Access diagnostics: `VS403463` (in `X-TFS-ServiceError` or the error body) is
-  thrown by `Invoke-AdoRequest` / `Invoke-AdoGetPaged` as ErrorId `AdoConditionalAccess`, not
-  retried, with a message explaining that regenerating the PAT does not help. (#18)
+  thrown by `Invoke-AdoRequest` / `Invoke-AdoGetPaged` / `Invoke-AdoDownload` and the
+  `Add-AdoWorkItemAttachment` upload as ErrorId `AdoConditionalAccess`, not retried, with a
+  message explaining that regenerating the PAT does not help. (#18)
 - `load.ps1` auto-initialises from any credential variable and honours `ADO_ACCESS`. (#18)
 - Docs: credential model (identity / context / secrets) and hard rules in `SKILL.md` and
   `references/base.md`. (#18)
@@ -33,10 +34,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Missing-credential errors now list the access-specific and Bearer variables that were tried
   (names only). (#18)
+- `Invoke-AdoRequest`, `Invoke-AdoGetPaged` and `Invoke-AdoDownload` without `-Headers` now use
+  the current session's headers, falling back to environment resolution only when there is no
+  session. (#18)
 
 ### Fixed
 
 - `SKILL.md` frontmatter: stray characters after the `compatibility` value. (#18)
+- `Resolve-AdoConfig` no longer echoes the content of a malformed config file (which could
+  include a legacy `pat`) in its warning; it reports the path and error type only. (#18)
+- Whitespace-only `-Pat` / `-Token` / credential variables are treated as absent, so the
+  session's `AuthScheme` always matches the header sent. (#18)
 
 ---
 

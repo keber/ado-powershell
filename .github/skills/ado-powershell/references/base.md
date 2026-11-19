@@ -65,8 +65,25 @@ but do not modify data). `Add-AdoWorkItemAttachment` calls the guard itself befo
 upload. `-WhatIf` still works on a Read session because nothing is sent.
 
 If you call `Invoke-AdoRequest` directly with a read-only POST, add `-ReadOnly`. A session object
-without an `Access` property, or no session at all, is not restricted. This is defense in
-depth: the PAT's scopes remain the real control.
+without an `Access` property, or no session at all, is not restricted.
+
+Design choices (accepted trade-offs):
+
+- **One active session per process.** The guard reads the *current* session (`$AdoSession` set
+  by the last `Initialize-AdoSession`), not the headers of the individual call. Passing write
+  `-Headers` explicitly does not bypass a Read session. To switch, re-initialise:
+  `Initialize-AdoSession -Access Write` (better: do writes in a separate process).
+- **`-ReadOnly` is declared by the caller.** The library cannot inspect a POST body to decide
+  whether it modifies data; a caller that marks a write as `-ReadOnly` defeats the guard. This
+  is defense in depth only: the PAT's scopes (or the build identity's permissions) remain the
+  real control, so give `ADO_PAT_READ` read-only scopes.
+
+**Default headers follow the session.** `Invoke-AdoRequest`, `Invoke-AdoGetPaged` and
+`Invoke-AdoDownload` called without `-Headers` use the current session's `Headers`, so a Read
+session keeps using `ADO_PAT_READ` and never falls back to a broader `ADO_PAT`. Only when there
+is no session do they resolve `New-AdoHeaders` from the environment.
+
+Whitespace-only `-Pat`, `-Token` and credential variables are treated as absent everywhere.
 
 ### `New-AdoHeaders`
 
@@ -79,8 +96,8 @@ a PAT or `@{ Authorization = 'Bearer ...' }` for a token. Without parameters it 
 
 When Microsoft Entra Conditional Access blocks a request (IP / network location or device
 policy), ADO reports error `VS403463`. The skill looks for it in both the `X-TFS-ServiceError`
-response header (URL-decoded) and the error body. `Invoke-AdoRequest` and `Invoke-AdoGetPaged` throw ErrorId `AdoConditionalAccess` without
-retrying. Regenerating the PAT does not help: run from an allowed network/device or ask the
+response header (URL-decoded) and the error body. `Invoke-AdoRequest`, `Invoke-AdoGetPaged`, `Invoke-AdoDownload` and the attachment upload in
+`Add-AdoWorkItemAttachment` throw ErrorId `AdoConditionalAccess` without retrying. Regenerating the PAT does not help: run from an allowed network/device or ask the
 Entra ID administrator.
 
 ---
