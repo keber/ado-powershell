@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0-rc.3] - 2026-11-19
+
+Third release candidate: URL path segments (project, team, repository, work item type, label,
+reviewer) are escaped (#41). Published under the npm `next` dist-tag. Validated with mocked Pester
+tests on Windows PowerShell 5.1 only; not exercised against a real Azure DevOps organization or on
+PowerShell 7.
+
 ### Fixed
 
 - The project name is now escaped as a URL path segment in every request URL. All
