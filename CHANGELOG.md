@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.6.0-rc.1] - 2026-11-19
+
+Release candidate. Fixes for the 17 issues found in the November 2026 review (#1-#17), led by two
+security fixes. Published under the npm `next` dist-tag; `latest` stays on 1.5.0.
+
+### Security
+
+- `Save-AdoInlineImage` / `Invoke-AdoDownload`: ADO credentials are no longer sent to non-ADO hosts.
+  New `Test-AdoTrustedUrl` (https only; dev.azure.com, *.visualstudio.com, the session base host).
+  `Invoke-AdoDownload` throws on an untrusted host unless `-Headers` is passed explicitly; inline
+  images on external hosts are skipped with a warning. (#1)
+- `Save-AdoInlineImage`: image extensions are allow-listed (png, jpg, gif, bmp, webp, svg) and the
+  file base name is sanitized. (#15)
+- `Add-AdoWorkItemAttachment`: `-LiteralPath` resolution, leaf-file check, and the upload file name
+  is URI-escaped. (#14)
+- `references/config.json` no longer ships a `pat` key. (#6)
+
+### Changed
+
+- `Invoke-AdoRequest`: POST/PATCH are retried only on 429 (opt in with `-RetryNonIdempotent`);
+  `Retry-After` is honoured, capped at 120 s. (#7)
+- `Invoke-AdoPipelineRun`: `ConfirmImpact = 'High'`, so it prompts unless `-Confirm:$false`. (#16)
+- `Get-AdoTestSuites` / `Get-AdoTestCases`: non-404 errors (401, 403, ...) are rethrown instead of
+  returning an empty list; when every endpoint shape returns 404 the function throws. (#5)
+- Sign-in pages are detected by strong markers and raised as an ErrorRecord with ErrorId
+  `AdoSignInPage`, never retried. (#8) Downloads that return `text/html`, and inline images whose
+  bytes are not an image, are rejected. (#9)
+- List functions follow continuation tokens (new `Invoke-AdoGetPaged`); work item revisions page
+  with `$top`/`$skip`; `Invoke-AdoWiql -Top` is validated (1-20000) and warns on likely truncation. (#11)
+- `Get-AdoWorkItemsBatch`: new `-ErrorPolicy Omit|Fail` (default `Omit`); omitted ids are reported
+  in a warning. (#12)
+- Dot-sourcing the skill no longer turns on `Set-StrictMode` or changes `$ErrorActionPreference` in
+  the caller session; each function sets them itself. (#17)
+
+### Fixed
+
+- `Invoke-AdoPipelineRun`: only the literal `refs/heads/` prefix is stripped from branch names. (#2)
+- `Get-AdoPipelineRuns`: `-Branch`, `-Result` and `-Top` are applied client-side (the 7.1 API
+  ignores them). (#3)
+- `New-AdoWorkItem`: `-State` accepts any state of the process (ValidateSet removed). (#4)
+- `Resolve-AdoConfig`: a bare `baseUrl` host gets the organization appended. (#6)
+- 400 responses include the service message on PowerShell 7. (#10)
+- `Invoke-AdoWiql`: link queries return ids from `workItemRelations`. (#13)
+- `assets/smoke-test.ps1`: loader path. (#17)
+
+### Not verified
+
+All fixes were validated with mocked Pester tests on Windows PowerShell 5.1 only: no calls against a
+real Azure DevOps organization and no runs on PowerShell 7.
+
+---
+
 ## [1.5.0] - 2026-09-09
 
 Helpers generalized from Azure DevOps scripts written independently across three QA projects, plus
