@@ -18,8 +18,7 @@
   $AdoSession = Initialize-AdoSession -Org 'contoso' -Project 'MyApp'
 #>
 
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
+# StrictMode / ErrorActionPreference are set inside each function, not here: this file is dot-sourced and must not alter the caller session.
 
 # Session cache for Get-AdoWorkItemTypeFields. Declared here rather than initialised lazily
 # inside the function: under Set-StrictMode, reading a script variable that was never assigned
@@ -38,6 +37,7 @@ function Get-AdoProjects {
         [string]$ApiV = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     return Invoke-AdoGetPaged -Uri "$(Get-AdoBaseUrl $Org)/_apis/projects?api-version=$ApiV" -Headers $Headers
 }
 
@@ -51,6 +51,7 @@ function Get-AdoTeams {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     return Invoke-AdoGetPaged -Uri "$(Get-AdoBaseUrl $Org)/_apis/projects/$Project/teams?api-version=$ApiV" -Headers $Headers
 }
 
@@ -73,6 +74,7 @@ function Get-AdoWorkItem {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/workitems/$Id`?`$expand=$Expand&api-version=$ApiV"
     return Invoke-AdoGet -Uri $uri -Headers $Headers
 }
@@ -122,6 +124,7 @@ function Get-AdoWorkItemsBatch {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     # 'fields' and '$expand' are mutually exclusive in the workitemsbatch API: any $expand other
     # than None alongside 'fields' is answered with HTTP 400. Resolve it here rather than letting
     # the caller discover it as a server error.
@@ -190,6 +193,7 @@ function Get-AdoWorkItemComments {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/workitems/$Id/comments?api-version=$ApiV-preview.3"
     return Invoke-AdoGetPaged -Uri $uri -Headers $Headers -ItemsProperty 'comments'
 }
@@ -205,6 +209,7 @@ function Get-AdoWorkItemRevisions {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     # Revisions are paged with $top/$skip (no continuation token): keep asking until a page comes
     # back shorter than $top.
     $pageSize = 200
@@ -253,6 +258,7 @@ function Get-AdoWorkItemTypeFields {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $cacheKey = "$Org/$Project/$Type"
     if (-not $Force -and $script:AdoWorkItemTypeFieldCache.ContainsKey($cacheKey)) {
         return $script:AdoWorkItemTypeFieldCache[$cacheKey]
@@ -306,6 +312,7 @@ function Invoke-AdoWiql {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $uri  = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/wiql?`$top=$Top&api-version=$ApiV"
     $body = @{ query = $Query } | ConvertTo-Json
     $r    = Invoke-AdoRequest -Method POST -Uri $uri -Body $body `
@@ -386,6 +393,7 @@ function New-AdoWorkItem {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
     $ops = [System.Collections.Generic.List[hashtable]]::new()
     $ops.Add(@{ op='add'; path='/fields/System.Title'; value=$Title })
@@ -436,6 +444,7 @@ function Update-AdoWorkItem {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
     $ops = [System.Collections.Generic.List[hashtable]]::new()
     if ($Title)         { $ops.Add(@{ op='replace'; path='/fields/System.Title';          value=$Title         }) }
@@ -479,6 +488,7 @@ function Add-AdoWorkItemComment {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/workitems/$Id/comments?api-version=$ApiV-preview.3"
 
     if (-not $PSCmdlet.ShouldProcess($uri, "POST - Comment on WI #$Id")) { return $null }
@@ -506,6 +516,7 @@ function Get-AdoIdFromUrl {
         [AllowEmptyString()]
         [string]$Url
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     if ([string]::IsNullOrWhiteSpace($Url)) { return $null }
     if ($Url -match '(?i)/workitems/(\d+)(\?|$)') { return [int]$Matches[1] }
     return $null
@@ -542,6 +553,7 @@ function Get-AdoWorkItemParent {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $wi = if ($PSCmdlet.ParameterSetName -eq 'ById') {
         Get-AdoWorkItem -Id $Id -Org $Org -Project $Project -ApiV $ApiV -Headers $Headers
     } else {
@@ -602,6 +614,7 @@ function Test-AdoWorkItemLink {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $wi = if ($PSCmdlet.ParameterSetName -eq 'ById') {
         Get-AdoWorkItem -Id $SourceId -Org $Org -Project $Project -ApiV $ApiV -Headers $Headers
     } else {
@@ -643,6 +656,7 @@ function Add-AdoWorkItemLink {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $ops = @(@{
         op    = 'add'
         path  = '/relations/-'
@@ -681,6 +695,7 @@ function Add-AdoWorkItemAttachment {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     # Resolve once, literally (no wildcard expansion, PowerShell $PWD-relative), and require a file
     try { $full = (Resolve-Path -LiteralPath $FilePath -ErrorAction Stop).ProviderPath }
     catch { throw "File not found: $FilePath" }

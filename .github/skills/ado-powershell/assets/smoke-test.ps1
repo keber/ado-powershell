@@ -9,8 +9,11 @@
   $env:ADO_ORG     = '<your-organization>'    # e.g. 'contoso'
   $env:ADO_PROJECT = '<your-project>'         # e.g. 'MyApp'
 
-  # 2. Run:
-  . .\github\skills\ado-powershell\assets\smoke-test.ps1
+  # 2. Run it in its own scope (do NOT dot-source: it sets StrictMode / ErrorActionPreference
+  #    and calls exit, and would leak both into your session):
+  & .\.github\skills\ado-powershell\assets\smoke-test.ps1
+  # or, from any shell:
+  powershell -NoProfile -File .\.github\skills\ado-powershell\assets\smoke-test.ps1
 
 .NOTES
   This script does not modify any data. Safe to run in production.

@@ -12,8 +12,7 @@
   alone misses them. These helpers turn that HTML into text, and those <img> tags into local files.
 #>
 
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
+# StrictMode / ErrorActionPreference are set inside each function, not here: this file is dot-sourced and must not alter the caller session.
 
 #region -- HTML --
 
@@ -47,6 +46,7 @@ function ConvertFrom-AdoHtml {
         [AllowEmptyString()]
         [string]$Html
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     if ([string]::IsNullOrEmpty($Html)) { return '' }
 
     $t = $Html -replace '(?is)<(script|style)[^>]*>.*?</\1>', ''
@@ -98,6 +98,7 @@ function Get-AdoInlineImageUrl {
 
         [switch]$AttachmentOnly
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $out = New-Object System.Collections.Generic.List[string]
     if ([string]::IsNullOrWhiteSpace($Html)) { return , $out.ToArray() }
 
@@ -133,6 +134,7 @@ function Get-AdoWorkItemContentHtml {
         [AllowNull()]
         [object]$WorkItem
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     if ($null -eq $WorkItem) { return '' }
 
     $type  = Get-AdoFieldValue -WorkItem $WorkItem -Name 'System.WorkItemType' -Default ''
@@ -178,6 +180,7 @@ function Resolve-AdoAttachmentUrl {
         [string]$Org  = $script:AdoSession.Org,
         [string]$ApiV = $script:AdoSession.ApiV
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     if ([string]::IsNullOrWhiteSpace($Url)) { return $null }
     if ($Url -like 'data:*') { return $Url }
 
@@ -255,6 +258,7 @@ function Save-AdoInlineImage {
         [string]$ApiV = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
     $sourceHtml = if ($PSCmdlet.ParameterSetName -eq 'ByHtml') {
         $Html
@@ -355,6 +359,7 @@ function Test-AdoImageSignature {
     .NOTES     Internal helper for Save-AdoInlineImage.
     #>
     param([Parameter(Mandatory, Position = 0)][string]$Path)
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $fs = [IO.File]::OpenRead($Path)
     try {
         $buf = New-Object byte[] 512
@@ -380,6 +385,7 @@ function Get-AdoImageExtension {
         [AllowEmptyString()]
         [string]$Url
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     if ([string]::IsNullOrWhiteSpace($Url)) { return 'png' }
 
     # The extension comes from untrusted content, so only allow-listed image types are returned.

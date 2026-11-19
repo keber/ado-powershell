@@ -11,8 +11,7 @@
   Optional variables: ADO_ORG, ADO_PROJECT (read from environment if present).
 #>
 
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
+# StrictMode / ErrorActionPreference are set inside each function, not here: this file is dot-sourced and must not alter the caller session.
 
 #region -- Authentication --
 
@@ -26,6 +25,7 @@ function New-AdoHeaders {
     param(
         [string]$Pat = ''
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     if ([string]::IsNullOrWhiteSpace($Pat)) { $Pat = $env:ADO_PAT }
     if ([string]::IsNullOrWhiteSpace($Pat)) { $Pat = $env:AZURE_DEVOPS_EXT_PAT }
     if ([string]::IsNullOrWhiteSpace($Pat)) {
@@ -78,6 +78,7 @@ function Get-AdoFieldValue {
 
         [object]$Default = $null
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
     $fieldsObj = if ($PSCmdlet.ParameterSetName -eq 'Fields') {
         $Fields
@@ -123,6 +124,7 @@ function Test-AdoSignInResponse {
         [AllowNull()]
         [object]$Response
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
     if ($null -eq $Response) { return $false }
 
@@ -173,6 +175,7 @@ function Read-AdoJsonUtf8 {
 
         [switch]$Raw
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
     if (-not (Test-Path -LiteralPath $Path)) {
         throw "File not found: $Path"
@@ -229,6 +232,7 @@ function Invoke-AdoRequest {
         [int]$RetryDelaySec  = 2,
         [switch]$RetryNonIdempotent
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
     if (-not $Headers) { $Headers = New-AdoHeaders }
 
@@ -359,6 +363,7 @@ function Invoke-AdoGet {
         [int]$MaxRetries    = 3,
         [int]$RetryDelaySec = 2
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     Invoke-AdoRequest -Method GET -Uri $Uri -Headers $Headers `
         -MaxRetries $MaxRetries -RetryDelaySec $RetryDelaySec
 }
@@ -374,6 +379,7 @@ function Test-AdoTrustedUrl {
         [Parameter(Mandatory, Position = 0)][AllowNull()][AllowEmptyString()][string]$Url,
         [string]$Org = $script:AdoSession.Org
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $uri = $null
     if (-not [uri]::TryCreate($Url, [UriKind]::Absolute, [ref]$uri)) { return $false }
     if ($uri.Scheme -ne 'https' -or $uri.UserInfo) { return $false }
@@ -419,6 +425,7 @@ function Invoke-AdoGetPaged {
         [int]$MaxRetries       = 3,
         [int]$RetryDelaySec    = 2
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
     if (-not $Headers) { $Headers = New-AdoHeaders }
 
@@ -575,6 +582,7 @@ function Invoke-AdoDownload {
         [Parameter(Mandatory)][string]$OutFile,
         [hashtable]$Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     if (-not $Headers) {
         if (-not (Test-AdoTrustedUrl -Url $Uri)) {
             $h = $null
@@ -640,6 +648,7 @@ function Resolve-AdoConfig {
         [string]$BaseUrl    = '',
         [string]$ConfigPath = ''
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
     #    optional config file
     $file = @{}
@@ -748,6 +757,7 @@ function Initialize-AdoSession {
         [string]$BaseUrl    = '',
         [string]$ConfigPath = ''
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
     $resolved = Resolve-AdoConfig `
         -Org        $Org `
@@ -775,6 +785,7 @@ function Get-AdoBaseUrl {
     .SYNOPSIS  Returns the base ADO URL for the given org, preferring a custom BaseUrl if set.
     #>
     param([string]$Org = $script:AdoSession.Org)
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     # If caller has a custom BaseUrl on the session (e.g. ADO Server), use it.
     if ($Org -eq $script:AdoSession.Org -and $script:AdoSession.BaseUrl) {
         return $script:AdoSession.BaseUrl

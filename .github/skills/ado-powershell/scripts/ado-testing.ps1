@@ -22,8 +22,7 @@
   $AdoSession = Initialize-AdoSession -Org 'contoso' -Project 'MyApp'
 #>
 
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
+# StrictMode / ErrorActionPreference are set inside each function, not here: this file is dot-sourced and must not alter the caller session.
 
 #region -- Test Plans: Read --
 
@@ -37,6 +36,7 @@ function Get-AdoTestPlans {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     return Invoke-AdoGetPaged -Uri "$(Get-AdoBaseUrl $Org)/$Project/_apis/testplan/plans?api-version=$ApiV" -Headers $Headers
 }
 
@@ -51,6 +51,7 @@ function Get-AdoTestPlan {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     return Invoke-AdoGet -Uri "$(Get-AdoBaseUrl $Org)/$Project/_apis/testplan/plans/$PlanId`?api-version=$ApiV" -Headers $Headers
 }
 
@@ -80,6 +81,7 @@ function Get-AdoTestSuites {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $base = "$(Get-AdoBaseUrl $Org)/$Project"
     $urls = @(
         "$base/_apis/test/plans/$PlanId/suites?api-version=$ApiV",
@@ -134,6 +136,7 @@ function Get-AdoTestCases {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $base = "$(Get-AdoBaseUrl $Org)/$Project"
     $urls = @(
         "$base/_apis/test/plans/$PlanId/suites/$SuiteId/testcases?api-version=$ApiV",
@@ -179,6 +182,7 @@ function Get-AdoTestRuns {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/test/runs?`$top=$Top&api-version=$ApiV"
     if ($PlanId) { $uri += "&planId=$PlanId" }
     $r = Invoke-AdoGet -Uri $uri -Headers $Headers
@@ -201,6 +205,7 @@ function Get-AdoTestRunResults {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $r = Invoke-AdoGet -Uri "$(Get-AdoBaseUrl $Org)/$Project/_apis/test/runs/$RunId/results?`$top=$Top&api-version=$ApiV" -Headers $Headers
     $results = $r.value
     if (@($results).Count -eq $Top) {
@@ -226,6 +231,7 @@ function New-AdoTestRun {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $uri  = "$(Get-AdoBaseUrl $Org)/$Project/_apis/test/runs?api-version=$ApiV"
     $body = @{ name = $Name; plan = @{ id = $PlanId } } | ConvertTo-Json
 
@@ -258,6 +264,7 @@ function Update-AdoTestRunResults {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/test/runs/$RunId/results?api-version=$ApiV"
 
     if (-not $PSCmdlet.ShouldProcess($uri, "POST - $($Results.Count) results in Run #$RunId")) { return $null }
@@ -293,6 +300,7 @@ function New-AdoTestPlan {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
     $body = @{ name = $Name; areaPath = $AreaPath }
     if ($IterationPath) { $body.iteration  = $IterationPath }
@@ -343,6 +351,7 @@ function New-AdoTestSuite {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
     $body = @{
         suiteType   = $SuiteType
@@ -395,6 +404,7 @@ function Update-AdoTestSuite {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $uri  = "$(Get-AdoBaseUrl $Org)/$Project/_apis/testplan/plans/$PlanId/suites/$SuiteId`?api-version=$ApiV"
     $body = @{ name = $Name } | ConvertTo-Json -Depth 3
 
@@ -434,6 +444,7 @@ function Remove-AdoTestCaseFromSuite {
         [string]$Project = $script:AdoSession.Project,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     # api-version is pinned to 5.0: this operation exists only on the legacy Test Management API.
     $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/test/plans/$PlanId/suites/$SuiteId/testcases/$TestCaseId`?api-version=5.0"
 
@@ -485,6 +496,7 @@ function New-AdoTestCase {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
     $extra = $ExtraFields.Clone()
 
@@ -551,6 +563,7 @@ function Add-AdoTestCaseToSuite {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
     $body = @($TestCaseIds | ForEach-Object { @{ workItem = @{ id = $_ } } })
     $uri  = "$(Get-AdoBaseUrl $Org)/$Project/_apis/testplan/plans/$PlanId/suites/$SuiteId/testcase?api-version=$ApiV"
