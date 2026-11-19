@@ -798,3 +798,65 @@ Describe 'Issue 38 - review follow-ups (V38-001..005)' {
         (Get-Call GET)[0].Uri | Should -Match 'searchCriteria\.status=notSet&'
     }
 }
+
+Describe 'Issue 38 - V38-007 repeated-page signature' {
+    BeforeAll {
+        # Nested deeper than any -Depth a serializer might use (PowerShell 7 warns on truncation).
+        function script:New-DeepPr([int]$Id) {
+            $leaf = [pscustomobject]@{ v = 'leaf' }
+            foreach ($i in 1..8) { $leaf = [pscustomobject]@{ level = $i; child = $leaf } }
+            [pscustomobject]@{ pullRequestId = $Id; title = "PR $Id"; createdBy = $leaf; reviewers = @($leaf) }
+        }
+    }
+    BeforeEach {
+        $script:AdoSession = New-PrSession
+        $script:Calls = [System.Collections.Generic.List[object]]::new()
+    }
+
+    It 'does not serialize pages and emits no warning for distinct deep pages' {
+        $script:Page = 0
+        Mock Invoke-RestMethod {
+            Invoke-FakeAdo $Method $Uri $Body | Out-Null
+            $script:Page++
+            switch ($script:Page) {
+                1       { [pscustomobject]@{ value = @((New-DeepPr 1), (New-DeepPr 2)) } }
+                2       { [pscustomobject]@{ value = @((New-DeepPr 3), (New-DeepPr 4)) } }
+                default { [pscustomobject]@{ value = @((New-DeepPr 5)) } }
+            }
+        }
+        Mock ConvertTo-Json { throw 'page signature must not serialize items' }
+        $out = Get-AdoPullRequests -RepoId 'MyRepo' -PageSize 2 3>&1
+        @($out | Where-Object { $_ -is [System.Management.Automation.WarningRecord] }).Count | Should -Be 0
+        @($out | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] }).Count | Should -Be 5
+        Should -Invoke ConvertTo-Json -Times 0 -Exactly
+    }
+
+    It 'still detects a repeated page of deep objects' {
+        Mock Invoke-RestMethod {
+            Invoke-FakeAdo $Method $Uri $Body | Out-Null
+            [pscustomobject]@{ value = @((New-DeepPr 1), (New-DeepPr 2)) }
+        }
+        $out = Get-AdoPullRequests -RepoId 'MyRepo' -PageSize 2 3>&1
+        $warn = @($out | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
+        $warn.Count | Should -Be 1
+        "$warn" | Should -Match 'repeated'
+        @($out | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] }).Count | Should -Be 2
+        (Get-Call GET).Count | Should -Be 2
+    }
+
+    It 'Get-AdoPageSignature uses <Prop> when present' -ForEach @(
+        @{ Prop = 'pullRequestId' }, @{ Prop = 'id' }, @{ Prop = 'commitId' }, @{ Prop = 'changeId' }
+    ) {
+        $a = [pscustomobject]@{ $Prop = 'A'; deep = (New-DeepPr 9) }
+        $b = [pscustomobject]@{ $Prop = 'B'; deep = (New-DeepPr 9) }
+        Get-AdoPageSignature -Page @($a) | Should -Not -Be (Get-AdoPageSignature -Page @($b))
+        Get-AdoPageSignature -Page @($a) | Should -Be (Get-AdoPageSignature -Page @([pscustomobject]@{ $Prop = 'A'; deep = 'other' }))
+    }
+
+    It 'Get-AdoPageSignature falls back to shallow scalar properties without an id' {
+        $x = [pscustomobject]@{ name = 'x'; count = 1; nested = (New-DeepPr 1) }
+        $y = [pscustomobject]@{ name = 'y'; count = 1; nested = (New-DeepPr 1) }
+        Get-AdoPageSignature -Page @($x) | Should -Not -Be (Get-AdoPageSignature -Page @($y))
+        Get-AdoPageSignature -Page @('s1', 2) | Should -Not -Be (Get-AdoPageSignature -Page @('s1', 3))
+    }
+}

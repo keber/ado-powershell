@@ -148,6 +148,36 @@ function Get-AdoValueList {
     return @()
 }
 
+function Get-AdoPageSignature {
+    <#
+    .SYNOPSIS  Internal: cheap signature of a page of items, used to detect a server that repeats a page.
+    .DESCRIPTION
+      Uses each item's identifying property (pullRequestId, id, commitId, changeId - first one
+      present); without one, falls back to the item's top-level scalar properties. Nested objects
+      are never serialized (PowerShell 7's ConvertTo-Json warns when they exceed -Depth).
+    #>
+    param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Page)
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    $parts = foreach ($item in $Page) {
+        if ($null -eq $item) { '<null>'; continue }
+        if ($item -is [string] -or $item -is [ValueType]) { "v:$item"; continue }
+        $sig = $null
+        foreach ($name in 'pullRequestId', 'id', 'commitId', 'changeId') {
+            $p = $item.PSObject.Properties[$name]
+            if ($p -and $null -ne $p.Value) { $sig = "${name}:$($p.Value)"; break }
+        }
+        if (-not $sig) {
+            $scalars = foreach ($p in $item.PSObject.Properties) {
+                $v = $p.Value
+                if ($null -eq $v -or $v -is [string] -or $v -is [ValueType]) { "$($p.Name)=$v" }
+            }
+            $sig = 's:' + (@($scalars) -join ';')
+        }
+        $sig
+    }
+    return (@($parts) -join '|')
+}
+
 function Invoke-AdoGetSkipPaged {
     <#
     .SYNOPSIS  Internal: GETs a list endpoint paged with $top / $skip and collects every page.
@@ -187,7 +217,7 @@ function Invoke-AdoGetSkipPaged {
         if ($vp -and $null -ne $vp.Value) { $page = @($vp.Value) }
 
         if ($page.Count -gt 0) {
-            $sig = ConvertTo-Json -InputObject $page -Depth 3 -Compress
+            $sig = Get-AdoPageSignature -Page $page
             if ($null -ne $lastPage -and $sig -eq $lastPage) {
                 Write-Warning "Server repeated the same page (skip=$skip ignored?); stopped paging to avoid an endless loop: $Uri"
                 break
