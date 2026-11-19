@@ -1097,7 +1097,33 @@ function Get-AdoProjectUrl {
     if ([string]::IsNullOrWhiteSpace($Project)) {
         throw 'Get-AdoProjectUrl: the project is empty. Pass -Project or set it with Initialize-AdoSession.'
     }
-    return "$(Get-AdoBaseUrl $Org)/$([Uri]::EscapeDataString($Project))"
+    return "$(Get-AdoBaseUrl $Org)/$(ConvertTo-AdoPathSegment -Value $Project -Name 'project')"
+}
+
+function ConvertTo-AdoPathSegment {
+    <#
+    .SYNOPSIS  Escapes a free-text value (project, team, repository, type, label...) as ONE URL path segment.
+    .DESCRIPTION
+      Returns [Uri]::EscapeDataString($Value). Throws before any request when the value is empty or
+      whitespace, or is the dot segment '.' or '..' (after trimming): EscapeDataString leaves dots
+      unescaped and URI normalisation would drop the segment or climb one level up the path.
+    .PARAMETER Value  The plain (unescaped) value.
+    .PARAMETER Name   What the value is, for the error message (e.g. 'project', 'team').
+    .EXAMPLE   "$base/_apis/git/repositories/$(ConvertTo-AdoPathSegment -Value $RepoId -Name 'repository')"
+    #>
+    param(
+        [Parameter(Mandatory)][AllowNull()][AllowEmptyString()][string]$Value,
+        [Parameter(Mandatory)][string]$Name
+    )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        throw "The $Name is empty and cannot be used as a URL path segment."
+    }
+    $trimmed = $Value.Trim()
+    if ($trimmed -eq '.' -or $trimmed -eq '..') {
+        throw "The $Name '$trimmed' is a dot segment and cannot be used as a URL path segment (it would be dropped or move up the URL path)."
+    }
+    return [Uri]::EscapeDataString($Value)
 }
 
 #endregion

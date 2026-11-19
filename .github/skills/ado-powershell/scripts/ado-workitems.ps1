@@ -52,7 +52,7 @@ function Get-AdoTeams {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    return Invoke-AdoGetPaged -Uri "$(Get-AdoBaseUrl $Org)/_apis/projects/$([Uri]::EscapeDataString($Project))/teams?api-version=$ApiV" -Headers $Headers
+    return Invoke-AdoGetPaged -Uri "$(Get-AdoBaseUrl $Org)/_apis/projects/$(ConvertTo-AdoPathSegment -Value $Project -Name 'project')/teams?api-version=$ApiV" -Headers $Headers
 }
 
 #endregion
@@ -68,6 +68,7 @@ function Get-AdoWorkItem {
     #>
     param(
         [Parameter(Mandatory)][int]$Id,
+        [ValidateSet('None', 'Relations', 'Fields', 'Links', 'All')]
         [string]$Expand  = 'All',
         [string]$Org     = $script:AdoSession.Org,
         [string]$Project = $script:AdoSession.Project,
@@ -75,7 +76,7 @@ function Get-AdoWorkItem {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/wit/workitems/$Id`?`$expand=$Expand&api-version=$ApiV"
+    $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/wit/workitems/$Id`?`$expand=$([Uri]::EscapeDataString($Expand))&api-version=$ApiV"
     return Invoke-AdoGet -Uri $uri -Headers $Headers
 }
 
@@ -116,6 +117,7 @@ function Get-AdoWorkItemsBatch {
         [AllowEmptyCollection()]
         [int[]]$Ids,
         [string[]]$Fields,
+        [ValidateSet('None', 'Relations', 'Fields', 'Links', 'All')]
         [string]$Expand  = 'All',
         [ValidateRange(1, 200)][int]$BatchSize = 200,
         [ValidateSet('Omit', 'Fail')][string]$ErrorPolicy = 'Omit',
@@ -260,12 +262,12 @@ function Get-AdoWorkItemTypeFields {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    $cacheKey = "$Org/$Project/$Type"
+    $cacheKey = "$Org|$Project|$Type"
     if (-not $Force -and $script:AdoWorkItemTypeFieldCache.ContainsKey($cacheKey)) {
         return $script:AdoWorkItemTypeFieldCache[$cacheKey]
     }
 
-    $typeEncoded = [Uri]::EscapeDataString($Type)
+    $typeEncoded = ConvertTo-AdoPathSegment -Value $Type -Name 'work item type'
     $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/wit/workitemtypes/$typeEncoded/fields?api-version=$ApiV"
     $r   = Invoke-AdoGet -Uri $uri -Headers $Headers
     $script:AdoWorkItemTypeFieldCache[$cacheKey] = $r.value
@@ -409,7 +411,7 @@ function New-AdoWorkItem {
         $ops.Add(@{ op='add'; path="/fields/$k"; value=$ExtraFields[$k] })
     }
 
-    $uri  = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/wit/workitems/`$$([Uri]::EscapeDataString($Type))?api-version=$ApiV"
+    $uri  = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/wit/workitems/`$$(ConvertTo-AdoPathSegment -Value $Type -Name 'work item type')?api-version=$ApiV"
 
     if (-not $PSCmdlet.ShouldProcess($uri, "POST - Create ${Type}: '$Title'")) { return $null }
 
