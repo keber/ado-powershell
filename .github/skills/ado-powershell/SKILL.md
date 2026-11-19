@@ -1,7 +1,7 @@
 ---
 name: ado-powershell
 description: "Access Azure DevOps (ADO) via REST API using PowerShell. Covers reading and writing Work Items, Test Plans, Test Runs, Git Repositories, Pipelines, and Iterations. Use this skill when the user asks to query, create, or update items in Azure DevOps, or mentions ADO, Work Items, Test Plans, sprints, pipelines, repositories, or ADO bugs."
-compatibility: "Requires PowerShell 7+ (or Windows PowerShell 5.1). Needs Internet access to reach dev.azure.com. The ADO_PAT environment variable must be set."r<>
+compatibility: "Requires PowerShell 7+ (or Windows PowerShell 5.1). Needs Internet access to reach dev.azure.com. A credential must be available in the environment: ADO_PAT (or ADO_PAT_READ / ADO_PAT_WRITE), AZURE_DEVOPS_EXT_PAT, or SYSTEM_ACCESSTOKEN in Azure Pipelines."
 metadata:
   author: keber
   version: "1.0.0"
@@ -18,7 +18,8 @@ Supports **🔵 read** operations (no side effects) and
 > **AGENT INSTRUCTIONS - follow before doing anything else:**
 > 1. **Never paste function bodies into the terminal.** All functions are already on disk.
 > 2. **Load with one command:** `. .github/skills/ado-powershell/load.ps1`
->    Auto-initialises `$AdoSession` when `ADO_PAT`, `ADO_ORG`, and `ADO_PROJECT` are set.
+>    Auto-initialises `$AdoSession` when `ADO_ORG`, a project and a credential are set
+>    (see [Credential model](#credential-model)).
 > 3. **This file is the quick-lookup index.** Do not read `.ps1` source files.
 >    For full parameter tables and code examples, read the relevant domain reference file:
 >    - [references/base.md](references/base.md) - Session and response helpers (field access, UTF-8 reads)
@@ -33,7 +34,8 @@ Supports **🔵 read** operations (no side effects) and
 
 ## Required configuration
 
-**Mandatory environment variable:** `ADO_PAT` (Azure DevOps Personal Access Token).
+**Mandatory:** a credential - `ADO_PAT` (Azure DevOps Personal Access Token) in the simplest
+setup; see [Credential model](#credential-model) for the read/write split and Bearer tokens.
 
 ```powershell
 $env:ADO_ORG     = 'my-organization'
@@ -51,27 +53,73 @@ $env:ADO_PAT = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
 > ⚠️ Never hardcode the PAT. Use minimum required scope and set an expiration date.
 > Permissions per operation → [references/errors.md](references/errors.md).
 
+### Credential model
+
+Configuration is split into three tiers; only the last one is secret.
+
+| Tier | What | Where it lives |
+|------|------|----------------|
+| Identity | Who you are: the PAT owner, the pipeline's build identity, or the Entra principal | Azure DevOps / Microsoft Entra ID |
+| Context | Where to act: `ADO_ORG`, `ADO_PROJECT` / `ADO_PROJECT_<ACCESS>`, `ADO_API_VER`, config file (`org`, `project`, `baseUrl`) | Environment or a config file outside the repo |
+| Secrets | `ADO_PAT` / `ADO_PAT_READ` / `ADO_PAT_WRITE`, `AZURE_DEVOPS_EXT_PAT`, `SYSTEM_ACCESSTOKEN`, `-Token` | Process environment only, for the shortest time needed |
+
+**Read/write split.** `Initialize-AdoSession -Access Read|Write` (default `Write`, which is
+today's behaviour) tries `ADO_PROJECT_<ACCESS>` / `ADO_PAT_<ACCESS>` first and falls back to
+`ADO_PROJECT` / `ADO_PAT` / `AZURE_DEVOPS_EXT_PAT`. A `Read` session refuses every 🔴 write
+function with ErrorId `AdoReadOnlySession` before sending anything; WIQL and batch reads (POSTs
+that do not modify data) keep working. This is defense in depth - **PAT scopes remain the real
+control**, so give `ADO_PAT_READ` read-only scopes.
+
+**Bearer tokens.** `SYSTEM_ACCESSTOKEN` (Azure Pipelines job token) or `-Token` (e.g. a Microsoft
+Entra token from `az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798
+--query accessToken -o tsv`) is sent as `Authorization: Bearer <token>`. Credential precedence:
+
+`-Token` → `-Bearer` (`SYSTEM_ACCESSTOKEN`) → `-Pat` → `ADO_PAT_<ACCESS>` → `ADO_PAT` →
+`AZURE_DEVOPS_EXT_PAT` → config-file `pat` → `SYSTEM_ACCESSTOKEN`
+
+PAT variables win over `SYSTEM_ACCESSTOKEN` so existing pipelines that have both keep sending
+the same credential; pass `-Bearer` to prefer the job token. In YAML the token must be mapped
+explicitly on the step: `env: SYSTEM_ACCESSTOKEN: $(System.AccessToken)`.
+
+**Hard rules**
+
+- Never persist a PAT as a user or machine environment variable (`setx`, System Properties,
+  `[Environment]::SetEnvironmentVariable(..., 'User'|'Machine')`): set it per process only.
+- Never copy credentials into a repository, worktree, config file inside the repo, or log.
+- Report missing variables by **name** only - never echo a PAT or token value. The skill's own
+  errors follow this rule.
+- Prefer `ADO_PAT_READ` + `-Access Read` for anything that only reads; use the write PAT only in
+  the process that writes.
+
 ---
 
 ## Session initialization
 
 ```powershell
 . .github/skills/ado-powershell/load.ps1
-# Auto-calls Initialize-AdoSession when ADO_PAT (or AZURE_DEVOPS_EXT_PAT) is set.
+# Auto-calls Initialize-AdoSession when a credential is set (ADO_PAT, AZURE_DEVOPS_EXT_PAT,
+# ADO_PAT_READ, ADO_PAT_WRITE or SYSTEM_ACCESSTOKEN). Access: ADO_ACCESS (Read|Write) if set,
+# Read when ADO_PAT_READ is the only credential, Write otherwise.
 # If not auto-initialised, run:
-$AdoSession = Initialize-AdoSession   # reads from env vars
+$AdoSession = Initialize-AdoSession   # reads from env vars (Write session)
+$AdoSession = Initialize-AdoSession -Access Read   # ADO_PAT_READ / ADO_PROJECT_READ; writes refused
 $AdoSession = Initialize-AdoSession -Org 'contoso' -Project 'MyApp'   # explicit override
 $AdoSession = Initialize-AdoSession -ConfigPath "$HOME/.config/ado/config.json"  # from file
+$AdoSession = Initialize-AdoSession -Bearer   # pipeline: SYSTEM_ACCESSTOKEN as Bearer
 ```
 
 **Config resolution order** (for each value - first non-empty wins):
-1. Explicit parameter (`-Org`, `-Project`, `-Pat`, `-ApiV`, `-BaseUrl`)
-2. Environment variable (`ADO_ORG`, `ADO_PROJECT`, `ADO_PAT` -> `AZURE_DEVOPS_EXT_PAT`, `ADO_API_VER`)
+1. Explicit parameter (`-Org`, `-Project`, `-Pat` / `-Token` / `-Bearer`, `-ApiV`, `-BaseUrl`)
+2. Environment variable (`ADO_ORG`, `ADO_PROJECT_<ACCESS>` -> `ADO_PROJECT`, `ADO_PAT_<ACCESS>` -> `ADO_PAT` -> `AZURE_DEVOPS_EXT_PAT`, `ADO_API_VER`; `SYSTEM_ACCESSTOKEN` after the config file)
 3. Config file (`-ConfigPath`) - JSON keys: `org`, `project`, `apiVersion`, `baseUrl` (leave `baseUrl` empty to derive `https://dev.azure.com/<org>`; a bare `https://dev.azure.com` gets the org appended)
 
 Keep the config file outside the repo (e.g. `$HOME/.config/ado/config.json`) and provide the PAT via `ADO_PAT`. A `pat` key in the config file is still read for backward compatibility but is discouraged; `references/config.json` no longer ships one.
 
-Missing required values (`Org`, `Project`, `Pat`) throw a clear error - no silent fake defaults.
+Missing required values (`Org`, `Project`, credential) throw a clear error that names the
+variables it looked for - never their values, and no silent fake defaults.
+
+A Conditional Access rejection (`VS403463`: network location / device policy) is thrown as
+ErrorId `AdoConditionalAccess` without retrying; regenerating the PAT does not fix it.
 
 Every function defaults its `Org`, `Project`, `ApiV`, and `Headers` from `$AdoSession`.
 Pass them explicitly to override on a per-call basis.
@@ -142,6 +190,9 @@ Full docs: [references/base.md](references/base.md)
 | `Get-AdoFieldValue -WorkItem <wi> -Name <f>` | Read a field without throwing under `Set-StrictMode`. **Use this instead of `$wi.fields.'X'`** - ADO omits unset fields, and dot notation on a missing one throws. Accepts `-Default`. |
 | `Read-AdoJsonUtf8 -Path <p>` | Read a local JSON file as UTF-8. **Use this instead of `Get-Content`** for anything written back to ADO - PS 5.1 decodes with the ANSI codepage and turns accents into mojibake. |
 | `Test-AdoSignInResponse -Response <r>` | Is this an ADO sign-in page rather than a payload? Called automatically by `Invoke-AdoRequest`. |
+| `Initialize-AdoSession [-Access Read\|Write] [-Token <t> \| -Bearer]` | Build `$AdoSession`. `Read` refuses writes; `-Token` / `-Bearer` send `Authorization: Bearer`. |
+| `New-AdoHeaders [-Pat <p> \| -Token <t> \| -Bearer]` | Build the `Authorization` header (Basic for a PAT, Bearer for a token). |
+| `Assert-AdoWriteAccess` | Throw `AdoReadOnlySession` on a Read session. Called automatically by `Invoke-AdoRequest` for non-GET requests not marked `-ReadOnly`. |
 
 ### 🔵 Pipelines   ·   [references/pipelines.md](references/pipelines.md)
 

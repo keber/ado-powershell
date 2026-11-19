@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- Read/write credential split: `Initialize-AdoSession -Access Read|Write` (default `Write`, the
+  previous behaviour) resolves `ADO_PROJECT_<ACCESS>` / `ADO_PAT_<ACCESS>` before `ADO_PROJECT` /
+  `ADO_PAT` / `AZURE_DEVOPS_EXT_PAT`. The session records `Access` and `AuthScheme`. On a `Read`
+  session every write is refused with ErrorId `AdoReadOnlySession` before anything is sent:
+  `Invoke-AdoRequest` guards all non-GET requests unless marked `-ReadOnly` (WIQL and
+  workitemsbatch are), and `Add-AdoWorkItemAttachment` guards its raw upload. New
+  `Assert-AdoWriteAccess`. (#18)
+- Bearer tokens: `New-AdoHeaders -Token` / `-Bearer` and `Initialize-AdoSession -Token` / `-Bearer`
+  send `Authorization: Bearer` for Microsoft Entra tokens and `SYSTEM_ACCESSTOKEN`.
+  `SYSTEM_ACCESSTOKEN` is also used automatically when no PAT is set; PAT variables keep
+  precedence otherwise. (#18)
+- Conditional Access diagnostics: `VS403463` (in `X-TFS-ServiceError` or the error body) is
+  thrown by `Invoke-AdoRequest` / `Invoke-AdoGetPaged` as ErrorId `AdoConditionalAccess`, not
+  retried, with a message explaining that regenerating the PAT does not help. (#18)
+- `load.ps1` auto-initialises from any credential variable and honours `ADO_ACCESS`. (#18)
+- Docs: credential model (identity / context / secrets) and hard rules in `SKILL.md` and
+  `references/base.md`. (#18)
+
+### Changed
+
+- Missing-credential errors now list the access-specific and Bearer variables that were tried
+  (names only). (#18)
+
+### Fixed
+
+- `SKILL.md` frontmatter: stray characters after the `compatibility` value. (#18)
+
+---
+
 ## [1.6.0-rc.1] - 2026-11-19
 
 Release candidate. Fixes for the 17 issues found in the November 2026 review (#1-#17), led by two

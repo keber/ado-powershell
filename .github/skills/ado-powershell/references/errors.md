@@ -6,6 +6,8 @@
 |------|--------------|------------------------------|
 | `200-299` | Success | Returns parsed response as object |
 | `401 Unauthorized` | Invalid, expired or malformed PAT | Immediate error - **no retry** |
+| `401` / `403` with `VS403463` | Microsoft Entra Conditional Access policy (network location / device) | ErrorId `AdoConditionalAccess` - **no retry**; a new PAT will not help |
+| (none sent) | Write attempted on a `-Access Read` session | ErrorId `AdoReadOnlySession` - request never sent |
 | `403 Forbidden` | PAT scope insufficient for that operation | Immediate error - **no retry** |
 | `404 Not Found` | Non-existent resource ID or wrong URL | Immediate error - **no retry** |
 | `429 Too Many Requests` | ADO rate limit (API quota) | Exponential backoff up to `$MaxRetries` |
