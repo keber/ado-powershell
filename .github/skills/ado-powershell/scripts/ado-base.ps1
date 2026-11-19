@@ -307,6 +307,31 @@ function Invoke-AdoGet {
         -MaxRetries $MaxRetries -RetryDelaySec $RetryDelaySec
 }
 
+function Test-AdoTrustedUrl {
+    <#
+    .SYNOPSIS  True only for https URLs on an Azure DevOps host: the session/org base URL host,
+               dev.azure.com, or *.visualstudio.com. Gate for sending credentials.
+    .NOTES     Internal helper for Save-AdoInlineImage. Plain http, userinfo URLs and lookalike
+               hosts (dev.azure.com.evil.example) are rejected.
+    #>
+    param(
+        [Parameter(Mandatory, Position = 0)][AllowNull()][AllowEmptyString()][string]$Url,
+        [string]$Org = $script:AdoSession.Org
+    )
+    $uri = $null
+    if (-not [uri]::TryCreate($Url, [UriKind]::Absolute, [ref]$uri)) { return $false }
+    if ($uri.Scheme -ne 'https' -or $uri.UserInfo) { return $false }
+
+    $h = $uri.Host.ToLowerInvariant()
+    if ($h -eq 'dev.azure.com' -or $h.EndsWith('.visualstudio.com')) { return $true }
+
+    $baseUri = $null
+    if ([uri]::TryCreate((Get-AdoBaseUrl $Org), [UriKind]::Absolute, [ref]$baseUri)) {
+        return ($baseUri.Scheme -eq 'https' -and $h -eq $baseUri.Host.ToLowerInvariant())
+    }
+    return $false
+}
+
 # -- Authenticated file download: wraps Invoke-WebRequest -OutFile with no business logic
 function Invoke-AdoDownload {
     <#
@@ -314,14 +339,23 @@ function Invoke-AdoDownload {
       Downloads a resource from an authenticated ADO URL directly to a local file.
     .PARAMETER Uri      Full URL to download (including api-version if required).
     .PARAMETER OutFile  Local path where the file will be saved.
-    .PARAMETER Headers  Auth headers (hashtable). Defaults to New-AdoHeaders.
+    .PARAMETER Headers  Auth headers (hashtable). Defaults to New-AdoHeaders, but then the URL
+                        must be an https Azure DevOps host (Test-AdoTrustedUrl); otherwise it
+                        throws. Passing -Headers explicitly is an opt-in and skips that check.
     #>
     param(
         [Parameter(Mandatory)][string]$Uri,
         [Parameter(Mandatory)][string]$OutFile,
         [hashtable]$Headers
     )
-    if (-not $Headers) { $Headers = New-AdoHeaders }
+    if (-not $Headers) {
+        if (-not (Test-AdoTrustedUrl -Url $Uri)) {
+            $h = $null
+            try { $h = ([uri]$Uri).Host } catch { $h = $Uri }
+            throw "Invoke-AdoDownload: refusing to send Azure DevOps credentials to $h (not an https Azure DevOps host). Pass -Headers explicitly to override."
+        }
+        $Headers = New-AdoHeaders
+    }
     Invoke-WebRequest -Uri $Uri -Headers $Headers -OutFile $OutFile -ErrorAction Stop
 }
 #endregion

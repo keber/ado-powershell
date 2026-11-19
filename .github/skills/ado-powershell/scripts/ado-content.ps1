@@ -312,6 +312,10 @@ function Save-AdoInlineImage {
                 [IO.File]::WriteAllBytes($outFile, [Convert]::FromBase64String($Matches[1]))
             } else {
                 $resolved = Resolve-AdoAttachmentUrl -Url $url -Org $Org -ApiV $ApiV
+                if (-not (Test-AdoTrustedUrl -Url $resolved -Org $Org)) {
+                    Write-Warning "Image ${i}: skipped, URL is not an https Azure DevOps host (credentials are never sent to other hosts)."
+                    continue
+                }
                 Invoke-AdoDownload -Uri $resolved -OutFile $outFile -Headers $Headers
             }
 
