@@ -196,6 +196,15 @@ function Invoke-AdoRequest {
     .PARAMETER Headers      Hashtable of headers. Default: New-AdoHeaders.
     .PARAMETER MaxRetries   Maximum number of attempts (default: 3).
     .PARAMETER RetryDelaySec Base seconds for backoff (default: 2).
+    .PARAMETER RetryNonIdempotent
+      Retry POST/PATCH on timeouts and 5xx too. Off by default: a retry after a lost response
+      can repeat a write that already committed (duplicate work items, links, pipeline runs).
+      Use only for read-only POSTs (WIQL, workitemsbatch).
+
+    .NOTES
+      GET/PUT/DELETE retry on 429, 503 and other transient errors. POST/PATCH retry only on
+      429 (rejected before processing); any other error is thrown immediately, unretried.
+      A 429 Retry-After header (seconds) is honoured when present.
     #>
     param(
         [Parameter(Mandatory)]
@@ -209,10 +218,13 @@ function Invoke-AdoRequest {
         [string]$ContentType = 'application/json',
         [hashtable]$Headers,
         [int]$MaxRetries     = 3,
-        [int]$RetryDelaySec  = 2
+        [int]$RetryDelaySec  = 2,
+        [switch]$RetryNonIdempotent
     )
 
     if (-not $Headers) { $Headers = New-AdoHeaders }
+
+    $canRetryTransient = $RetryNonIdempotent -or ($Method -in 'GET', 'PUT', 'DELETE')
 
     $attempt = 0
     $lastErr = $null
@@ -275,9 +287,25 @@ function Invoke-AdoRequest {
                 throw "404 Not Found - resource not found: $Uri"
             }
 
-            # 429 / 503: rate-limit -- exponential backoff
+            # POST/PATCH are not idempotent: past this point only a 429 (rejected before the
+            # request was processed) is safe to retry. Anything else may have been committed
+            # server-side, so surface the original error instead of repeating the write.
+            if ($status -ne 429 -and -not $canRetryTransient) {
+                throw $lastErr
+            }
+
+            # 429 / 503: rate-limit -- exponential backoff (honours Retry-After on 429)
             if ($status -in 429, 503) {
                 $waitSec = $RetryDelaySec * [Math]::Pow(2, $attempt)
+                if ($status -eq 429) {
+                    $retryAfter = 0
+                    try {
+                        if ([int]::TryParse([string]$lastErr.Exception.Response.Headers['Retry-After'], [ref]$retryAfter) -and
+                            $retryAfter -gt 0) {
+                            $waitSec = [Math]::Min($retryAfter, 120)
+                        }
+                    } catch { }
+                }
                 Write-Warning "[$status] Rate-limit. Retry $attempt/$MaxRetries in ${waitSec}s..."
                 Start-Sleep -Seconds $waitSec
                 continue
