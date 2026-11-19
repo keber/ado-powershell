@@ -661,10 +661,13 @@ function Add-AdoWorkItemAttachment {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
-    if (-not (Test-Path $FilePath)) { throw "File not found: $FilePath" }
+    # Resolve once, literally (no wildcard expansion, PowerShell $PWD-relative), and require a file
+    try { $full = (Resolve-Path -LiteralPath $FilePath -ErrorAction Stop).ProviderPath }
+    catch { throw "File not found: $FilePath" }
+    if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { throw "Path is not a file: $FilePath" }
 
-    $fileName  = Split-Path $FilePath -Leaf
-    $uploadUri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/attachments?fileName=$fileName&api-version=$ApiV"
+    $fileName  = Split-Path $full -Leaf
+    $uploadUri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/attachments?fileName=$([Uri]::EscapeDataString($fileName))&api-version=$ApiV"
 
     if (-not $PSCmdlet.ShouldProcess($uploadUri, "POST - Upload '$fileName' and attach to WI #$Id")) { return $null }
 
@@ -672,7 +675,7 @@ function Add-AdoWorkItemAttachment {
     $uploadHdr = $Headers.Clone()
     $uploadHdr['Content-Type'] = 'application/octet-stream'
     $attachment = Invoke-RestMethod -Method POST -Uri $uploadUri `
-        -Headers $uploadHdr -Body ([IO.File]::ReadAllBytes($FilePath)) -ErrorAction Stop
+        -Headers $uploadHdr -Body ([IO.File]::ReadAllBytes($full)) -ErrorAction Stop
 
     # 2. Attach the reference to the Work Item
     $ops = @(@{
