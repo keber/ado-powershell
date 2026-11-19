@@ -155,9 +155,10 @@ function Get-AdoWorkItemsBatch {
         $body = @{ ids = @($slice); '$expand' = $Expand; errorPolicy = $ErrorPolicy }
         if ($Fields) { $body.fields = $Fields }
 
-        # Read-only POST: call Invoke-AdoRequest directly (not ShouldProcess)
+        # Read-only POST: call Invoke-AdoRequest directly (not ShouldProcess); -ReadOnly keeps it
+        # allowed on a Read session.
         $r = Invoke-AdoRequest -Method POST -Uri $uri -Body ($body | ConvertTo-Json -Depth 5) `
-            -ContentType 'application/json' -Headers $Headers -RetryNonIdempotent
+            -ContentType 'application/json' -Headers $Headers -RetryNonIdempotent -ReadOnly
 
         $valueProp = $r.PSObject.Properties['value']
         if ($valueProp -and $null -ne $valueProp.Value) {
@@ -315,8 +316,9 @@ function Invoke-AdoWiql {
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $uri  = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/wiql?`$top=$Top&api-version=$ApiV"
     $body = @{ query = $Query } | ConvertTo-Json
+    # Read-only POST: -ReadOnly keeps WIQL allowed on a Read session.
     $r    = Invoke-AdoRequest -Method POST -Uri $uri -Body $body `
-        -ContentType 'application/json' -Headers $Headers -RetryNonIdempotent
+        -ContentType 'application/json' -Headers $Headers -RetryNonIdempotent -ReadOnly
     # A query matching nothing may omit workItems entirely; under StrictMode reading an absent
     # property throws, so check for it before use.
     $wiProp  = $r.PSObject.Properties['workItems']
@@ -706,11 +708,20 @@ function Add-AdoWorkItemAttachment {
 
     if (-not $PSCmdlet.ShouldProcess($uploadUri, "POST - Upload '$fileName' and attach to WI #$Id")) { return $null }
 
+    # The upload below bypasses Invoke-AdoRequest, so the Read-session guard is applied here.
+    Assert-AdoWriteAccess -Operation "POST $uploadUri"
+
     # 1. Upload the binary
     $uploadHdr = $Headers.Clone()
     $uploadHdr['Content-Type'] = 'application/octet-stream'
-    $attachment = Invoke-RestMethod -Method POST -Uri $uploadUri `
-        -Headers $uploadHdr -Body ([IO.File]::ReadAllBytes($full)) -ErrorAction Stop
+    try {
+        $attachment = Invoke-RestMethod -Method POST -Uri $uploadUri `
+            -Headers $uploadHdr -Body ([IO.File]::ReadAllBytes($full)) -ErrorAction Stop
+    } catch {
+        # Same Conditional Access (VS403463) diagnostics as Invoke-AdoRequest.
+        if (Test-AdoConditionalAccessError -ErrorRecord $_) { throw (New-AdoConditionalAccessError -Uri $uploadUri) }
+        throw
+    }
 
     # 2. Attach the reference to the Work Item
     $ops = @(@{

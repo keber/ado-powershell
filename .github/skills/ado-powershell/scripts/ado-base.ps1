@@ -7,8 +7,10 @@
   . "$PSScriptRoot/ado-base.ps1"
 
 .NOTES
-  Requires ADO_PAT in the environment. Never hardcode the PAT in code.
-  Optional variables: ADO_ORG, ADO_PROJECT (read from environment if present).
+  Requires a credential in the environment: ADO_PAT (or ADO_PAT_READ / ADO_PAT_WRITE with
+  Initialize-AdoSession -Access), AZURE_DEVOPS_EXT_PAT, or SYSTEM_ACCESSTOKEN in pipelines.
+  Never hardcode a PAT or token in code.
+  Optional variables: ADO_ORG, ADO_PROJECT / ADO_PROJECT_<ACCESS> (read from environment if present).
 #>
 
 # StrictMode / ErrorActionPreference are set inside each function, not here: this file is dot-sourced and must not alter the caller session.
@@ -17,22 +19,109 @@
 
 function New-AdoHeaders {
     <#
-    .SYNOPSIS  Creates the HTTP Authorization (Basic) header for ADO REST API.
-    .PARAMETER Pat  Azure DevOps PAT.
-               Resolution order: -Pat → $env:ADO_PAT → $env:AZURE_DEVOPS_EXT_PAT
-    .OUTPUTS   Hashtable @{ Authorization = "Basic <b64>" }
+    .SYNOPSIS  Creates the HTTP Authorization header for ADO REST API (Basic for a PAT, Bearer for a token).
+    .PARAMETER Pat     Azure DevOps PAT (sent as Basic).
+    .PARAMETER Token   OAuth / Microsoft Entra access token (sent as Bearer), e.g. the output of
+                       az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798.
+    .PARAMETER Bearer  Use $env:SYSTEM_ACCESSTOKEN (Azure Pipelines job token) even when a PAT
+                       variable is also set.
+    .NOTES
+      Resolution order:
+        -Token → -Bearer ($env:SYSTEM_ACCESSTOKEN) → -Pat → $env:ADO_PAT → $env:AZURE_DEVOPS_EXT_PAT
+        → $env:SYSTEM_ACCESSTOKEN
+      PAT variables win over SYSTEM_ACCESSTOKEN so that existing callers that happen to have both
+      keep sending the same credential. Errors name variables only, never their values.
+    .OUTPUTS   Hashtable @{ Authorization = "Basic <b64>" } or @{ Authorization = "Bearer <token>" }
     #>
     param(
-        [string]$Pat = ''
+        [string]$Pat   = '',
+        [string]$Token = '',
+        [switch]$Bearer
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    if ([string]::IsNullOrWhiteSpace($Pat)) { $Pat = $env:ADO_PAT }
+
+    $hasPat   = -not [string]::IsNullOrWhiteSpace($Pat)
+    $hasToken = -not [string]::IsNullOrWhiteSpace($Token)
+    if ([int]$hasPat + [int]$hasToken + [int][bool]$Bearer -gt 1) {
+        throw 'New-AdoHeaders: pass only one of -Pat, -Token or -Bearer.'
+    }
+
+    if ($hasToken) { return @{ Authorization = "Bearer $Token" } }
+
+    if ($Bearer) {
+        if ([string]::IsNullOrWhiteSpace($env:SYSTEM_ACCESSTOKEN)) {
+            throw ('New-AdoHeaders -Bearer: SYSTEM_ACCESSTOKEN is not set. In YAML pipelines map it ' +
+                   'explicitly on the step (env: SYSTEM_ACCESSTOKEN: $(System.AccessToken)).')
+        }
+        return @{ Authorization = "Bearer $($env:SYSTEM_ACCESSTOKEN)" }
+    }
+
+    if (-not $hasPat) { $Pat = $env:ADO_PAT }
     if ([string]::IsNullOrWhiteSpace($Pat)) { $Pat = $env:AZURE_DEVOPS_EXT_PAT }
     if ([string]::IsNullOrWhiteSpace($Pat)) {
-        throw 'No PAT found. Set ADO_PAT or AZURE_DEVOPS_EXT_PAT, or pass -Pat explicitly.'
+        if (-not [string]::IsNullOrWhiteSpace($env:SYSTEM_ACCESSTOKEN)) {
+            return @{ Authorization = "Bearer $($env:SYSTEM_ACCESSTOKEN)" }
+        }
+        throw ('No credential found. Set ADO_PAT or AZURE_DEVOPS_EXT_PAT, map SYSTEM_ACCESSTOKEN, ' +
+               'or pass -Pat / -Token explicitly.')
     }
     $b64 = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(":$Pat"))
     return @{ Authorization = "Basic $b64" }
+}
+
+function Get-AdoDefaultHeaders {
+    <#
+    .SYNOPSIS
+      Headers used when a caller passes no -Headers: the current session's, else New-AdoHeaders.
+    .DESCRIPTION
+      Internal helper for Invoke-AdoRequest, Invoke-AdoGetPaged and Invoke-AdoDownload. Using the
+      session's headers keeps a Read session on the credential it was initialised with (for
+      example ADO_PAT_READ) instead of re-resolving ADO_PAT from the environment. Without a session
+      (or a session without Headers) the legacy environment resolution applies unchanged.
+    .OUTPUTS  Hashtable
+    #>
+    param()
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    $session = $null
+    try { $session = $script:AdoSession } catch { $session = $null }
+    if ($null -ne $session) {
+        $hp = $session.PSObject.Properties['Headers']
+        if ($hp -and $hp.Value -is [System.Collections.IDictionary] -and $hp.Value.Count -gt 0) {
+            return $hp.Value
+        }
+    }
+    return New-AdoHeaders
+}
+
+function Assert-AdoWriteAccess {
+    <#
+    .SYNOPSIS
+      Throws when the current session was initialised with -Access Read.
+    .DESCRIPTION
+      Client-side guard (defense in depth): the real control is the scope of the PAT or token.
+      Called by Invoke-AdoRequest for every non-GET request that is not declared -ReadOnly, and
+      by functions that send writes without going through Invoke-AdoRequest. A session object
+      without an Access property (built by hand, or before Access existed) counts as Write, and
+      no session at all is not blocked, so existing callers are unaffected.
+      The error has ErrorId AdoReadOnlySession and never contains credential values.
+    .PARAMETER Operation  Short description of the refused operation, for the error message.
+    #>
+    param(
+        [string]$Operation = 'This write operation'
+    )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+
+    $session = $null
+    try { $session = $script:AdoSession } catch { $session = $null }
+    if ($null -eq $session) { return }
+    $accessProp = $session.PSObject.Properties['Access']
+    if (-not $accessProp -or [string]$accessProp.Value -ne 'Read') { return }
+
+    $msg = ("$Operation was refused: the Azure DevOps session was initialised with -Access Read. " +
+            'Run Initialize-AdoSession -Access Write (ADO_PAT_WRITE / ADO_PROJECT_WRITE) to write.')
+    throw [System.Management.Automation.ErrorRecord]::new(
+        [System.InvalidOperationException]::new($msg), 'AdoReadOnlySession',
+        [System.Management.Automation.ErrorCategory]::PermissionDenied, $Operation)
 }
 
 #endregion
@@ -190,6 +279,69 @@ function Read-AdoJsonUtf8 {
     return ($text | ConvertFrom-Json)
 }
 
+function Test-AdoConditionalAccessError {
+    <#
+    .SYNOPSIS
+      Tells whether a failed HTTP call was rejected by a Microsoft Entra Conditional Access policy
+      (Azure DevOps error VS403463).
+    .DESCRIPTION
+      Looks for "VS403463" in the X-TFS-ServiceError response header (URL-encoded by ADO; read
+      through an indexer on Windows PowerShell 5.1 or GetValues on PowerShell 7) and in the error
+      body (ErrorDetails.Message). The response stream is not read, so the 400 handling that
+      follows can still consume it. Internal helper for Invoke-AdoRequest / Invoke-AdoGetPaged.
+    .PARAMETER ErrorRecord  The error record caught from Invoke-RestMethod / Invoke-WebRequest.
+    .OUTPUTS  [bool]
+    #>
+    param(
+        [Parameter(Mandatory)][AllowNull()][object]$ErrorRecord
+    )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    if ($null -eq $ErrorRecord) { return $false }
+
+    $texts = [System.Collections.Generic.List[string]]::new()
+    try {
+        if ($ErrorRecord.ErrorDetails -and $ErrorRecord.ErrorDetails.Message) {
+            $texts.Add([string]$ErrorRecord.ErrorDetails.Message)
+        }
+    } catch { }
+
+    $headers = $null
+    try { $headers = $ErrorRecord.Exception.Response.Headers } catch { }
+    if ($null -ne $headers) {
+        $value = $null
+        try { $value = $headers['X-TFS-ServiceError'] } catch { }
+        if (-not $value) {
+            try { $value = @($headers.GetValues('X-TFS-ServiceError')) -join ' ' } catch { }
+        }
+        if ($value) {
+            $text = [string](@($value) -join ' ')
+            try { $text = [uri]::UnescapeDataString($text) } catch { }
+            $texts.Add($text)
+        }
+    }
+
+    foreach ($t in $texts) {
+        if ($t -match '(?i)\bVS403463\b') { return $true }
+    }
+    return $false
+}
+
+function New-AdoConditionalAccessError {
+    <#
+    .SYNOPSIS  Builds the ErrorRecord (ErrorId AdoConditionalAccess) thrown for VS403463.
+    .NOTES     Internal helper. The message contains the request URI only, never credentials.
+    #>
+    param([Parameter(Mandatory)][string]$Uri)
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    $msg = ('VS403463: Azure DevOps rejected the request because of a Microsoft Entra Conditional ' +
+            'Access policy (network location / IP range or device compliance). The credential itself ' +
+            'is not the problem: regenerating the PAT or token will not help. Run from an allowed ' +
+            "network or device, or ask your Entra ID / Azure DevOps administrator. Request: $Uri")
+    return [System.Management.Automation.ErrorRecord]::new(
+        [System.UnauthorizedAccessException]::new($msg), 'AdoConditionalAccess',
+        [System.Management.Automation.ErrorCategory]::PermissionDenied, $Uri)
+}
+
 #endregion
 
 #region -- HTTP core with retries --
@@ -204,18 +356,24 @@ function Invoke-AdoRequest {
     .PARAMETER Uri          Full endpoint URL.
     .PARAMETER Body         Request body (UTF-8 string).
     .PARAMETER ContentType  Content-Type of the body. Default: application/json.
-    .PARAMETER Headers      Hashtable of headers. Default: New-AdoHeaders.
+    .PARAMETER Headers      Hashtable of headers. Default: the session's headers, else New-AdoHeaders.
     .PARAMETER MaxRetries   Maximum number of attempts (default: 3).
     .PARAMETER RetryDelaySec Base seconds for backoff (default: 2).
     .PARAMETER RetryNonIdempotent
       Retry POST/PATCH on timeouts and 5xx too. Off by default: a retry after a lost response
       can repeat a write that already committed (duplicate work items, links, pipeline runs).
       Use only for read-only POSTs (WIQL, workitemsbatch).
+    .PARAMETER ReadOnly
+      Declares that a non-GET request does not modify data (WIQL, workitemsbatch), so it is
+      allowed on a session initialised with -Access Read. Every other POST/PATCH/PUT/DELETE is
+      refused on a Read session (ErrorId AdoReadOnlySession) before anything is sent.
 
     .NOTES
       GET/PUT/DELETE retry on 429, 503 and other transient errors. POST/PATCH retry only on
       429 (rejected before processing); any other error is thrown immediately, unretried.
       A 429 Retry-After header (seconds) is honoured when present.
+      A Conditional Access rejection (VS403463) is thrown as ErrorId AdoConditionalAccess and
+      is never retried.
     #>
     param(
         [Parameter(Mandatory)]
@@ -230,11 +388,17 @@ function Invoke-AdoRequest {
         [hashtable]$Headers,
         [int]$MaxRetries     = 3,
         [int]$RetryDelaySec  = 2,
-        [switch]$RetryNonIdempotent
+        [switch]$RetryNonIdempotent,
+        [switch]$ReadOnly
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
-    if (-not $Headers) { $Headers = New-AdoHeaders }
+    # Central write guard: any non-GET request not declared read-only is a write.
+    if ($Method -ne 'GET' -and -not $ReadOnly) {
+        Assert-AdoWriteAccess -Operation "$Method $Uri"
+    }
+
+    if (-not $Headers) { $Headers = Get-AdoDefaultHeaders }
 
     $canRetryTransient = $RetryNonIdempotent -or ($Method -in 'GET', 'PUT', 'DELETE')
 
@@ -275,6 +439,11 @@ function Invoke-AdoRequest {
         catch {
             # Sign-in page: authentication problem, retrying cannot help.
             if ($_.FullyQualifiedErrorId -eq 'AdoSignInPage') { throw }
+
+            # Conditional Access (VS403463): a network/device policy, retrying cannot help.
+            if (Test-AdoConditionalAccessError -ErrorRecord $_) {
+                throw (New-AdoConditionalAccessError -Uri $Uri)
+            }
 
             $lastErr = $_
             $status  = $null
@@ -412,7 +581,7 @@ function Invoke-AdoGetPaged {
       exponentially (429 honours Retry-After, capped at 120s); other errors back off linearly. A sign-in page is thrown as ErrorId AdoSignInPage and is not retried.
 
     .PARAMETER Uri            First-page URL (including api-version). Must not carry continuationToken.
-    .PARAMETER Headers        Auth headers. Default: New-AdoHeaders.
+    .PARAMETER Headers        Auth headers. Default: the session's headers, else New-AdoHeaders.
     .PARAMETER ItemsProperty  Response property holding the items (default: value).
     .PARAMETER MaxItems       Stop after this many items (0 = no limit).
     .OUTPUTS  The collected items across all pages.
@@ -427,7 +596,7 @@ function Invoke-AdoGetPaged {
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
-    if (-not $Headers) { $Headers = New-AdoHeaders }
+    if (-not $Headers) { $Headers = Get-AdoDefaultHeaders }
 
     $items = [System.Collections.Generic.List[object]]::new()
     $token = $null
@@ -453,6 +622,9 @@ function Invoke-AdoGetPaged {
                 $status  = $null
                 try { $status = [int]$_.Exception.Response.StatusCode } catch { }
 
+                if (Test-AdoConditionalAccessError -ErrorRecord $_) {
+                    throw (New-AdoConditionalAccessError -Uri $pageUri)
+                }
                 if ($status -eq 401) { throw "401 Unauthorized - check ADO_PAT." }
                 if ($status -eq 403) { throw "403 Forbidden - PAT does not have sufficient permissions for: $pageUri" }
                 if ($status -eq 400) {
@@ -573,7 +745,8 @@ function Invoke-AdoDownload {
       Downloads a resource from an authenticated ADO URL directly to a local file.
     .PARAMETER Uri      Full URL to download (including api-version if required).
     .PARAMETER OutFile  Local path where the file will be saved.
-    .PARAMETER Headers  Auth headers (hashtable). Defaults to New-AdoHeaders, but then the URL
+    .PARAMETER Headers  Auth headers (hashtable). Defaults to the session's headers (New-AdoHeaders
+                        when there is no session), but then the URL
                         must be an https Azure DevOps host (Test-AdoTrustedUrl); otherwise it
                         throws. Passing -Headers explicitly is an opt-in and skips that check.
     #>
@@ -589,11 +762,16 @@ function Invoke-AdoDownload {
             try { $h = ([uri]$Uri).Host } catch { $h = $Uri }
             throw "Invoke-AdoDownload: refusing to send Azure DevOps credentials to $h (not an https Azure DevOps host). Pass -Headers explicitly to override."
         }
-        $Headers = New-AdoHeaders
+        $Headers = Get-AdoDefaultHeaders
     }
     # -PassThru keeps the response object alongside -OutFile (5.1 and 7), so the Content-Type
     # can be inspected: ADO answers a bad/expired PAT with its HTML sign-in page and HTTP 200.
-    $response = Invoke-WebRequest -Uri $Uri -Headers $Headers -OutFile $OutFile -PassThru -ErrorAction Stop
+    try {
+        $response = Invoke-WebRequest -Uri $Uri -Headers $Headers -OutFile $OutFile -PassThru -ErrorAction Stop
+    } catch {
+        if (Test-AdoConditionalAccessError -ErrorRecord $_) { throw (New-AdoConditionalAccessError -Uri $Uri) }
+        throw
+    }
     $contentType = $null
     if ($null -ne $response -and $null -ne $response.Headers) {
         $contentType = [string]($response.Headers['Content-Type'] | Select-Object -First 1)
@@ -626,19 +804,34 @@ function Resolve-AdoConfig {
         2. Environment variable
         3. Config file (if -ConfigPath is supplied and the file exists)
 
-      PAT resolution order:
-        -Pat → $env:ADO_PAT → $env:AZURE_DEVOPS_EXT_PAT → config file
+      Project resolution order (<ACCESS> is READ or WRITE, from -Access):
+        -Project → $env:ADO_PROJECT_<ACCESS> → $env:ADO_PROJECT → config file
+
+      Credential resolution order:
+        -Token (Bearer) → -Bearer ($env:SYSTEM_ACCESSTOKEN) → -Pat
+        → $env:ADO_PAT_<ACCESS> → $env:ADO_PAT → $env:AZURE_DEVOPS_EXT_PAT → config file
+        → $env:SYSTEM_ACCESSTOKEN (Bearer)
+      PAT variables win over SYSTEM_ACCESSTOKEN, so callers that have both keep their behaviour;
+      pass -Bearer to prefer the pipeline token. Only one of -Pat, -Token, -Bearer may be given.
 
       Config file format (JSON):
         { "org": "", "project": "", "apiVersion": "", "baseUrl": "" }
         ('pat' is still read for backward compatibility but discouraged: use ADO_PAT and
         keep the file outside the repo, e.g. $HOME/.config/ado/config.json.)
 
-    .OUTPUTS  Hashtable with keys: Org, Project, ApiV, Pat, BaseUrl
+    .PARAMETER Access  Read or Write (default Write: today's behaviour). Selects which
+                       ADO_PAT_<ACCESS> / ADO_PROJECT_<ACCESS> pair is tried first.
+    .PARAMETER Token   OAuth / Microsoft Entra access token, sent as Bearer.
+    .PARAMETER Bearer  Use $env:SYSTEM_ACCESSTOKEN as Bearer even when a PAT variable is set.
+
+    .OUTPUTS  Hashtable with keys: Org, Project, ApiV, Pat, Token, AuthScheme (Basic|Bearer),
+              Access, BaseUrl. Exactly one of Pat / Token is non-empty.
     .EXAMPLE
       $cfg = Resolve-AdoConfig -Org 'contoso' -Project 'MyApp'
     .EXAMPLE
       $cfg = Resolve-AdoConfig -ConfigPath "$HOME/.config/ado-powershell/config.json"
+    .EXAMPLE
+      $cfg = Resolve-AdoConfig -Access Read
     #>
     param(
         [string]$Org        = '',
@@ -646,9 +839,33 @@ function Resolve-AdoConfig {
         [string]$ApiV       = '',
         [string]$Pat        = '',
         [string]$BaseUrl    = '',
-        [string]$ConfigPath = ''
+        [string]$ConfigPath = '',
+        [ValidateSet('Read', 'Write')]
+        [string]$Access     = 'Write',
+        [string]$Token      = '',
+        [switch]$Bearer
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+
+    # Canonical casing ('read' -> 'Read') and the env-var suffix ('READ').
+    $Access    = if ($Access -eq 'Read') { 'Read' } else { 'Write' }
+    $suffix    = $Access.ToUpperInvariant()
+    $patVar    = "ADO_PAT_$suffix"
+    $projVar   = "ADO_PROJECT_$suffix"
+    # Whitespace-only values count as absent everywhere, so the AuthScheme reported always matches
+    # the header New-AdoHeaders builds (it ignores blank -Pat / -Token too).
+    $blankToEmpty = { param($v) if ([string]::IsNullOrWhiteSpace([string]$v)) { '' } else { [string]$v } }
+    $Pat       = & $blankToEmpty $Pat
+    $Token     = & $blankToEmpty $Token
+    $accessPat = & $blankToEmpty ([Environment]::GetEnvironmentVariable($patVar))
+    $accessPrj = & $blankToEmpty ([Environment]::GetEnvironmentVariable($projVar))
+    $envPat    = & $blankToEmpty $env:ADO_PAT
+    $envExtPat = & $blankToEmpty $env:AZURE_DEVOPS_EXT_PAT
+    $envSysTok = & $blankToEmpty $env:SYSTEM_ACCESSTOKEN
+
+    if ([int][bool]$Pat + [int][bool]$Token + [int][bool]$Bearer -gt 1) {
+        throw 'Resolve-AdoConfig: pass only one of -Pat, -Token or -Bearer.'
+    }
 
     #    optional config file
     $file = @{}
@@ -665,7 +882,10 @@ function Resolve-AdoConfig {
                 BaseUrl = if ($names -contains 'baseUrl'    -and $raw.baseUrl)    { $raw.baseUrl    } else { '' }
             }
         } catch {
-            Write-Warning "Resolve-AdoConfig: Could not parse config file '$ConfigPath': $_"
+            # Path and error type only: the parser message quotes the file content, which may
+            # include a legacy 'pat'.
+            Write-Warning ("Resolve-AdoConfig: Could not parse config file '$ConfigPath' " +
+                           "($($_.Exception.GetType().Name)); it is ignored.")
         }
     }
 
@@ -677,6 +897,7 @@ function Resolve-AdoConfig {
                     else { '' }
 
     $resolvedProj = if ($Project)                    { $Project }
+                    elseif ($accessPrj)              { $accessPrj }
                     elseif ($env:ADO_PROJECT)        { $env:ADO_PROJECT }
                     elseif ($file['Project'])        { $file['Project'] }
                     else { '' }
@@ -686,11 +907,22 @@ function Resolve-AdoConfig {
                     elseif ($file['ApiV'])           { $file['ApiV'] }
                     else { '7.1' }
 
-    $resolvedPat  = if ($Pat)                        { $Pat }
-                    elseif ($env:ADO_PAT)            { $env:ADO_PAT }
-                    elseif ($env:AZURE_DEVOPS_EXT_PAT) { $env:AZURE_DEVOPS_EXT_PAT }
-                    elseif ($file['Pat'])            { $file['Pat'] }
-                    else { '' }
+    # Credential: explicit token / -Bearer / explicit PAT, then PAT variables, then the pipeline token.
+    $resolvedPat   = ''
+    $resolvedToken = ''
+    if ($Token)      { $resolvedToken = $Token }
+    elseif ($Bearer) { $resolvedToken = $envSysTok }
+    else {
+        $filePat     = & $blankToEmpty $file['Pat']
+        $resolvedPat = if ($Pat)           { $Pat }
+                       elseif ($accessPat) { $accessPat }
+                       elseif ($envPat)    { $envPat }
+                       elseif ($envExtPat) { $envExtPat }
+                       elseif ($filePat)   { $filePat }
+                       else { '' }
+        if (-not $resolvedPat -and $envSysTok) { $resolvedToken = $envSysTok }
+    }
+    $authScheme = if ($resolvedToken) { 'Bearer' } else { 'Basic' }
 
     $resolvedBase = if ($BaseUrl)                    { $BaseUrl }
                     elseif ($file['BaseUrl'])        { $file['BaseUrl'] }
@@ -706,19 +938,29 @@ function Resolve-AdoConfig {
     # Validate required fields
     $missing = @()
     if (-not $resolvedOrg)  { $missing += 'Org  (param -Org or env ADO_ORG)' }
-    if (-not $resolvedProj) { $missing += 'Project  (param -Project or env ADO_PROJECT)' }
-    if (-not $resolvedPat)  { $missing += 'PAT  (param -Pat, env ADO_PAT, or env AZURE_DEVOPS_EXT_PAT)' }
+    if (-not $resolvedProj) { $missing += "Project  (param -Project, env $projVar or env ADO_PROJECT)" }
+    if (-not $resolvedPat -and -not $resolvedToken) {
+        $missing += if ($Bearer) {
+            'Token  (-Bearer requires env SYSTEM_ACCESSTOKEN)'
+        } else {
+            "PAT  (param -Pat or -Token, env $patVar, ADO_PAT, AZURE_DEVOPS_EXT_PAT or SYSTEM_ACCESSTOKEN)"
+        }
+    }
 
+    # Names only: values (PATs, tokens) are never part of the message.
     if ($missing.Count -gt 0) {
         throw "Resolve-AdoConfig: Missing required config values:`n  - $($missing -join "`n  - ")"
     }
 
     return @{
-        Org     = $resolvedOrg
-        Project = $resolvedProj
-        ApiV    = $resolvedApiV
-        Pat     = $resolvedPat
-        BaseUrl = $resolvedBase
+        Org        = $resolvedOrg
+        Project    = $resolvedProj
+        ApiV       = $resolvedApiV
+        Pat        = $resolvedPat
+        Token      = $resolvedToken
+        AuthScheme = $authScheme
+        Access     = $Access
+        BaseUrl    = $resolvedBase
     }
 }
 
@@ -733,12 +975,24 @@ function Initialize-AdoSession {
         2) Environment variables  (ADO_ORG, ADO_PROJECT, ADO_API_VER)
         3) Optional config file   (-ConfigPath)
 
-      PAT resolution order:
-        -Pat → $env:ADO_PAT → $env:AZURE_DEVOPS_EXT_PAT → config file
+      Project and credential resolution (see Resolve-AdoConfig for the full order):
+        Project:    -Project → ADO_PROJECT_<ACCESS> → ADO_PROJECT → config file
+        Credential: -Token → -Bearer → -Pat → ADO_PAT_<ACCESS> → ADO_PAT → AZURE_DEVOPS_EXT_PAT
+                    → config file → SYSTEM_ACCESSTOKEN
+      <ACCESS> is READ or WRITE. Without -Access the session is Write and only the WRITE pair is
+      added in front of today's ADO_PAT / ADO_PROJECT, so existing callers are unaffected.
+
+      A Read session refuses every write (POST/PATCH/PUT/DELETE not declared read-only) with
+      ErrorId AdoReadOnlySession. This is defense in depth: PAT scopes remain the real control.
+
+    .PARAMETER Access  Read or Write (default Write).
+    .PARAMETER Token   OAuth / Microsoft Entra access token, sent as Bearer.
+    .PARAMETER Bearer  Use $env:SYSTEM_ACCESSTOKEN (Azure Pipelines) even when a PAT variable is set.
 
     .OUTPUTS
-      PSCustomObject used by ado-workitems, ado-testing, ado-pipelines, and ado-git
-      functions as session defaults.
+      PSCustomObject (Org, Project, ApiV, BaseUrl, Access, AuthScheme, Headers) used by
+      ado-workitems, ado-testing, ado-pipelines, and ado-git functions as session defaults.
+      The raw PAT / token is not stored on the object (only inside Headers).
 
     .EXAMPLE
       $AdoSession = Initialize-AdoSession
@@ -748,6 +1002,14 @@ function Initialize-AdoSession {
 
     .EXAMPLE
       $AdoSession = Initialize-AdoSession -ConfigPath "$HOME/.config/ado-powershell/config.json"
+
+    .EXAMPLE
+      # Least privilege: read with ADO_PAT_READ / ADO_PROJECT_READ; writes are refused.
+      $AdoSession = Initialize-AdoSession -Access Read
+
+    .EXAMPLE
+      # Azure Pipelines step with env: SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+      $AdoSession = Initialize-AdoSession -Bearer
     #>
     param(
         [string]$Org        = '',
@@ -755,7 +1017,11 @@ function Initialize-AdoSession {
         [string]$ApiV       = '',
         [string]$Pat        = '',
         [string]$BaseUrl    = '',
-        [string]$ConfigPath = ''
+        [string]$ConfigPath = '',
+        [ValidateSet('Read', 'Write')]
+        [string]$Access     = 'Write',
+        [string]$Token      = '',
+        [switch]$Bearer
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
@@ -765,14 +1031,22 @@ function Initialize-AdoSession {
         -ApiV       $ApiV `
         -Pat        $Pat `
         -BaseUrl    $BaseUrl `
-        -ConfigPath $ConfigPath
+        -ConfigPath $ConfigPath `
+        -Access     $Access `
+        -Token      $Token `
+        -Bearer:$Bearer
+
+    $headers = if ($resolved.AuthScheme -eq 'Bearer') { New-AdoHeaders -Token $resolved.Token }
+               else                                   { New-AdoHeaders -Pat   $resolved.Pat }
 
     $session = [pscustomobject]@{
-        Org     = $resolved.Org
-        Project = $resolved.Project
-        ApiV    = $resolved.ApiV
-        BaseUrl = $resolved.BaseUrl
-        Headers = New-AdoHeaders -Pat $resolved.Pat
+        Org        = $resolved.Org
+        Project    = $resolved.Project
+        ApiV       = $resolved.ApiV
+        BaseUrl    = $resolved.BaseUrl
+        Access     = $resolved.Access
+        AuthScheme = $resolved.AuthScheme
+        Headers    = $headers
     }
 
     # Export as script variable so domain files can find it

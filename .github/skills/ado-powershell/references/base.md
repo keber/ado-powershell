@@ -5,6 +5,103 @@ Load the skill before using: `. .github/skills/ado-powershell/load.ps1`
 
 ---
 
+## Credentials and sessions
+
+### Three tiers
+
+| Tier | Contents | Rule |
+|------|----------|------|
+| Identity | PAT owner, pipeline build identity, Entra principal | Managed in Azure DevOps / Entra ID; grant the minimum scopes |
+| Context | `ADO_ORG`, `ADO_PROJECT`, `ADO_PROJECT_READ`, `ADO_PROJECT_WRITE`, `ADO_API_VER`, config file | Not secret; config file lives outside the repo |
+| Secrets | `ADO_PAT`, `ADO_PAT_READ`, `ADO_PAT_WRITE`, `AZURE_DEVOPS_EXT_PAT`, `SYSTEM_ACCESSTOKEN`, `-Token` | Process environment only |
+
+**Hard rules:** never persist a PAT as a user/machine environment variable; never copy
+credentials into a repository or worktree (including config files and logs); report missing
+variables by name only, never by value.
+
+### `Initialize-AdoSession`
+
+| Parameter | Description |
+|-----------|-------------|
+| `-Access` | `Read` or `Write` (default `Write` = previous behaviour). Selects `ADO_PAT_<ACCESS>` / `ADO_PROJECT_<ACCESS>` first |
+| `-Token` | OAuth / Microsoft Entra access token, sent as `Bearer` |
+| `-Bearer` | Use `SYSTEM_ACCESSTOKEN` as `Bearer` even when a PAT variable is set |
+| `-Pat`, `-Org`, `-Project`, `-ApiV`, `-BaseUrl`, `-ConfigPath` | Unchanged |
+
+Only one of `-Pat`, `-Token`, `-Bearer` may be passed. Resolution order:
+
+- Project: `-Project` → `ADO_PROJECT_<ACCESS>` → `ADO_PROJECT` → config file
+- Credential: `-Token` → `-Bearer` → `-Pat` → `ADO_PAT_<ACCESS>` → `ADO_PAT` →
+  `AZURE_DEVOPS_EXT_PAT` → config-file `pat` → `SYSTEM_ACCESSTOKEN`
+
+The session object carries `Org`, `Project`, `ApiV`, `BaseUrl`, `Access`, `AuthScheme`
+(`Basic` | `Bearer`) and `Headers`. The raw PAT / token is not stored as a property.
+
+```powershell
+# Reader process: read-only PAT, writes refused client-side
+$env:ADO_PAT_READ = '<read-only PAT>'   # per process; never setx
+$AdoSession = Initialize-AdoSession -Access Read
+Invoke-AdoWiql -Query 'SELECT [System.Id] FROM WorkItems WHERE [System.State] = ''Active'''  # works
+New-AdoWorkItem -Type Task -Title 'x'   # throws AdoReadOnlySession, nothing is sent
+
+# Azure Pipelines (YAML step must map: env: SYSTEM_ACCESSTOKEN: $(System.AccessToken))
+$AdoSession = Initialize-AdoSession -Bearer
+
+# Microsoft Entra token from the Azure CLI
+$tok = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv
+$AdoSession = Initialize-AdoSession -Token $tok
+```
+
+`load.ps1` auto-initialises when any credential variable is set. It uses `ADO_ACCESS`
+(`Read` | `Write`) when present, `Read` when `ADO_PAT_READ` is the only credential, and `Write`
+otherwise.
+
+### Read sessions and write refusal
+
+`Invoke-AdoRequest` calls `Assert-AdoWriteAccess` for every `POST` / `PATCH` / `PUT` / `DELETE`
+that is not marked `-ReadOnly`; on a `Read` session it throws ErrorId `AdoReadOnlySession`
+before any HTTP call. `Invoke-AdoWiql` and `Get-AdoWorkItemsBatch` pass `-ReadOnly` (they POST
+but do not modify data). `Add-AdoWorkItemAttachment` calls the guard itself before its raw
+upload. `-WhatIf` still works on a Read session because nothing is sent.
+
+If you call `Invoke-AdoRequest` directly with a read-only POST, add `-ReadOnly`. A session object
+without an `Access` property, or no session at all, is not restricted.
+
+Design choices (accepted trade-offs):
+
+- **One active session per process.** The guard reads the *current* session (`$AdoSession` set
+  by the last `Initialize-AdoSession`), not the headers of the individual call. Passing write
+  `-Headers` explicitly does not bypass a Read session. To switch, re-initialise:
+  `Initialize-AdoSession -Access Write` (better: do writes in a separate process).
+- **`-ReadOnly` is declared by the caller.** The library cannot inspect a POST body to decide
+  whether it modifies data; a caller that marks a write as `-ReadOnly` defeats the guard. This
+  is defense in depth only: the PAT's scopes (or the build identity's permissions) remain the
+  real control, so give `ADO_PAT_READ` read-only scopes.
+
+**Default headers follow the session.** `Invoke-AdoRequest`, `Invoke-AdoGetPaged` and
+`Invoke-AdoDownload` called without `-Headers` use the current session's `Headers`, so a Read
+session keeps using `ADO_PAT_READ` and never falls back to a broader `ADO_PAT`. Only when there
+is no session do they resolve `New-AdoHeaders` from the environment.
+
+Whitespace-only `-Pat`, `-Token` and credential variables are treated as absent everywhere.
+
+### `New-AdoHeaders`
+
+`New-AdoHeaders [-Pat <p> | -Token <t> | -Bearer]` returns `@{ Authorization = 'Basic ...' }` for
+a PAT or `@{ Authorization = 'Bearer ...' }` for a token. Without parameters it uses `ADO_PAT` →
+`AZURE_DEVOPS_EXT_PAT` → `SYSTEM_ACCESSTOKEN`. It does not know about `-Access`; use
+`Initialize-AdoSession` for the read/write split.
+
+### Conditional Access (`VS403463`)
+
+When Microsoft Entra Conditional Access blocks a request (IP / network location or device
+policy), ADO reports error `VS403463`. The skill looks for it in both the `X-TFS-ServiceError`
+response header (URL-decoded) and the error body. `Invoke-AdoRequest`, `Invoke-AdoGetPaged`, `Invoke-AdoDownload` and the attachment upload in
+`Add-AdoWorkItemAttachment` throw ErrorId `AdoConditionalAccess` without retrying. Regenerating the PAT does not help: run from an allowed network/device or ask the
+Entra ID administrator.
+
+---
+
 ## `Get-AdoFieldValue`
 
 Reads a field from a Work Item without throwing under `Set-StrictMode`.
