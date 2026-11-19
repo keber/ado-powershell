@@ -93,6 +93,12 @@ function Get-AdoWorkItemsBatch {
       Ids per request. Defaults to the API maximum of 200; lower it only to work around a
       constrained gateway.
 
+    .PARAMETER ErrorPolicy
+      Omit | Fail (default: Omit). The API default is Fail, where one deleted or inaccessible id
+      fails the whole batch. With Omit, ADO returns null for such ids; those entries are dropped
+      from the result and a warning lists the ids that were omitted. Use Fail to get the strict
+      behaviour back.
+
     .PARAMETER Fields
       Optional: array of field names. If omitted, returns all fields.
       ADO rejects a request that combines 'fields' with an '$expand' other than None (HTTP 400),
@@ -112,6 +118,7 @@ function Get-AdoWorkItemsBatch {
         [string[]]$Fields,
         [string]$Expand  = 'All',
         [ValidateRange(1, 200)][int]$BatchSize = 200,
+        [ValidateSet('Omit', 'Fail')][string]$ErrorPolicy = 'Omit',
         [string]$Org     = $script:AdoSession.Org,
         [string]$Project = $script:AdoSession.Project,
         [string]$ApiV    = $script:AdoSession.ApiV,
@@ -144,7 +151,7 @@ function Get-AdoWorkItemsBatch {
 
         # @() keeps a one-id slice an array: ConvertTo-Json renders a bare int otherwise and the
         # endpoint rejects the body.
-        $body = @{ ids = @($slice); '$expand' = $Expand }
+        $body = @{ ids = @($slice); '$expand' = $Expand; errorPolicy = $ErrorPolicy }
         if ($Fields) { $body.fields = $Fields }
 
         # Read-only POST: call Invoke-AdoRequest directly (not ShouldProcess)
@@ -153,7 +160,21 @@ function Get-AdoWorkItemsBatch {
 
         $valueProp = $r.PSObject.Properties['value']
         if ($valueProp -and $null -ne $valueProp.Value) {
-            foreach ($item in @($valueProp.Value)) { $results.Add($item) }
+            # errorPolicy=Omit: ADO leaves a null in 'value' for each id it could not return.
+            foreach ($item in @($valueProp.Value)) { if ($null -ne $item) { $results.Add($item) } }
+        }
+    }
+
+    if ($ErrorPolicy -eq 'Omit') {
+        $returned = @{}
+        foreach ($item in $results) {
+            $idProp = $item.PSObject.Properties['id']
+            if ($idProp) { $returned[[int]$idProp.Value] = $true }
+        }
+        $omitted = @($Ids | Where-Object { -not $returned.ContainsKey([int]$_) } | Select-Object -Unique)
+        if ($omitted.Count -gt 0) {
+            Write-Warning ("Get-AdoWorkItemsBatch: $($omitted.Count) work item(s) omitted by ADO " +
+                           "(deleted or inaccessible): $($omitted -join ', ')")
         }
     }
 
