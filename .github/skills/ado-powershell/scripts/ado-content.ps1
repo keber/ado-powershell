@@ -291,6 +291,12 @@ function Save-AdoInlineImage {
         $null = New-Item -ItemType Directory -Path $OutDirectory -Force
     }
 
+    # -BaseName is a file name stem, never a path: drop invalid filename chars (separators, ':'),
+    # then '..' sequences, and fall back to the default when nothing is left.
+    $invalid  = [regex]::Escape(-join [IO.Path]::GetInvalidFileNameChars())
+    $BaseName = ($BaseName -replace "[$invalid]", '') -replace '\.{2,}', ''
+    if ([string]::IsNullOrWhiteSpace($BaseName)) { $BaseName = 'inline' }
+
     $written = New-Object System.Collections.Generic.List[string]
     $i = 0
 
@@ -350,22 +356,32 @@ function Get-AdoImageExtension {
     )
     if ([string]::IsNullOrWhiteSpace($Url)) { return 'png' }
 
-    if ($Url -match '^data:image/([A-Za-z0-9.+-]+);') {
-        $e = $Matches[1].ToLowerInvariant()
+    # The extension comes from untrusted content, so only allow-listed image types are returned.
+    # Anything else (ps1, hta, 'png:evil' alternate data streams, ...) falls back to png.
+    $normalize = {
+        param([string]$Raw)
+        $e = $Raw.ToLowerInvariant()
+        if ($e -eq 'svg+xml') { $e = 'svg' }
+        $e = $e -replace '[^a-z0-9]', ''
         if ($e -eq 'jpeg') { $e = 'jpg' }
-        return $e
+        if ($e -in @('png', 'jpg', 'gif', 'bmp', 'webp', 'svg')) { return $e }
+        return 'png'
+    }
+
+    if ($Url -match '^data:image/([A-Za-z0-9.+-]+);') {
+        return (& $normalize $Matches[1])
     }
 
     # fileName= carries the real name; the path segment is usually an opaque GUID.
     if ($Url -match '(?i)[?&]fileName=([^&]+)') {
         $name = [System.Uri]::UnescapeDataString($Matches[1])
-        $e = [IO.Path]::GetExtension($name).TrimStart('.').ToLowerInvariant()
-        if ($e) { return $e }
+        $e = [IO.Path]::GetExtension($name).TrimStart('.')
+        if ($e) { return (& $normalize $e) }
     }
 
     try {
-        $e = [IO.Path]::GetExtension(([Uri]$Url).LocalPath).TrimStart('.').ToLowerInvariant()
-        if ($e) { return $e }
+        $e = [IO.Path]::GetExtension(([Uri]$Url).LocalPath).TrimStart('.')
+        if ($e) { return (& $normalize $e) }
     } catch { }
 
     return 'png'
