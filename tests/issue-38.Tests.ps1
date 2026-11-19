@@ -707,3 +707,94 @@ Describe 'Issue 38 - Read session: threads, inspection and metadata' {
         @($script:Calls | Where-Object { $_.Method -ne 'GET' }).Count | Should -Be 0
     }
 }
+
+Describe 'Issue 38 - review follow-ups (V38-001..005)' {
+    BeforeEach {
+        $script:AdoSession = New-PrSession
+        $script:Calls = [System.Collections.Generic.List[object]]::new()
+        Mock Invoke-RestMethod { Invoke-FakeAdo $Method $Uri $Body }
+        Mock Write-Host { }
+        Mock Start-Sleep { }
+    }
+
+    It 'V38-001 the cached user id is not reused after the session headers are replaced in place' {
+        Get-AdoCurrentUserId | Out-Null
+        $script:AdoSession.Headers = @{ Authorization = 'Basic b3RoZXI=' }
+        Get-AdoCurrentUserId | Out-Null
+        @($script:Calls | Where-Object { $_.Uri -match 'connectionData' }).Count | Should -Be 2
+    }
+
+    It 'V38-001 the session cache never stores the raw Authorization value' {
+        Get-AdoCurrentUserId | Out-Null
+        $json = $script:AdoSession | Select-Object * -ExcludeProperty Headers | ConvertTo-Json -Depth 5
+        $json | Should -Not -Match 'ZmFrZQ=='
+    }
+
+    It 'V38-001 explicit -Headers equal to the session headers still use the cache' {
+        Get-AdoCurrentUserId | Out-Null
+        Get-AdoCurrentUserId -Headers @{ Authorization = 'Basic ZmFrZQ==' } | Out-Null
+        @($script:Calls | Where-Object { $_.Uri -match 'connectionData' }).Count | Should -Be 1
+    }
+
+    It 'V38-002 skip-paging stops with a warning when the server repeats the same page' {
+        Mock Invoke-RestMethod {
+            Invoke-FakeAdo $Method $Uri $Body | Out-Null
+            [pscustomobject]@{ value = @([pscustomobject]@{ pullRequestId = 1 }, [pscustomobject]@{ pullRequestId = 2 }) }
+        }
+        $w = $null
+        $r = Get-AdoPullRequests -RepoId 'MyRepo' -PageSize 2 -WarningVariable w -WarningAction SilentlyContinue
+        @($r).Count | Should -Be 2
+        (Get-Call GET).Count | Should -Be 2
+        "$w" | Should -Match 'repeated'
+    }
+
+    It 'V38-002 skip-paging stops at the page cap with a warning' {
+        $script:Page = 0
+        Mock Invoke-RestMethod {
+            Invoke-FakeAdo $Method $Uri $Body | Out-Null
+            $script:Page++
+            [pscustomobject]@{ value = @([pscustomobject]@{ pullRequestId = $script:Page }) }
+        }
+        $w = $null
+        $r = Invoke-AdoGetSkipPaged -Uri "$script:Base/pullrequests?api-version=7.1" -PageSize 1 -MaxPages 5 `
+                -WarningVariable w -WarningAction SilentlyContinue
+        @($r).Count | Should -Be 5
+        "$w" | Should -Match '5 pages'
+    }
+
+    It 'V38-004 Invoke-AdoRequest does not retry a 409 for <M> and keeps status and server message' -ForEach @(
+        @{ M = 'GET' }, @{ M = 'PUT' }, @{ M = 'DELETE' }, @{ M = 'POST' }, @{ M = 'PATCH' }
+    ) {
+        $script:n = 0
+        Mock Invoke-RestMethod {
+            $script:n++
+            throw (New-HttpError -Status 409 -Body '{"message":"TF401289: conflict detail"}')
+        }
+        $err = $null
+        try { Invoke-AdoRequest -Method $M -Uri "$script:PrBase`?api-version=7.1" -Body '{}' -RetryNonIdempotent } catch { $err = $_ }
+        $script:n | Should -Be 1
+        [int]$err.Exception.Response.StatusCode | Should -Be 409
+        "$err" | Should -Match 'TF401289'
+        "$err" | Should -Not -Match 'Failed after'
+    }
+
+    It 'V38-005 <Name> sends the documented casing for <Param>=<In>' -ForEach @(
+        @{ Name = 'Complete-AdoPullRequest';        Param = 'MergeStrategy'; In = 'REBASEMERGE'; Out = 'rebaseMerge'; Field = 'completionOptions.mergeStrategy' }
+        @{ Name = 'Set-AdoPullRequestAutoComplete'; Param = 'MergeStrategy'; In = 'NOFASTFORWARD'; Out = 'noFastForward'; Field = 'completionOptions.mergeStrategy' }
+        @{ Name = 'New-AdoPullRequestThread';       Param = 'Status';        In = 'WONTFIX';     Out = 'wontFix';     Field = 'status' }
+    ) {
+        $p = @{ RepoId = 'MyRepo'; PullRequestId = 42; $Param = $In }
+        if ($Name -eq 'Complete-AdoPullRequest')  { $p.LastMergeSourceCommitId = 'x' }
+        if ($Name -eq 'New-AdoPullRequestThread') { $p.Content = 'c' }
+        & $Name @p -Confirm:$false | Out-Null
+        $b = (@($script:Calls | Where-Object { $_.Method -in 'POST', 'PATCH' })[0]).Body | ConvertFrom-Json
+        $v = $b
+        foreach ($seg in $Field.Split('.')) { $v = $v.$seg }
+        $v | Should -BeExactly $Out
+    }
+
+    It 'V38-005 Get-AdoPullRequests sends the documented casing for -Status' {
+        Get-AdoPullRequests -RepoId 'MyRepo' -Status NOTSET | Out-Null
+        (Get-Call GET)[0].Uri | Should -Match 'searchCriteria\.status=notSet&'
+    }
+}

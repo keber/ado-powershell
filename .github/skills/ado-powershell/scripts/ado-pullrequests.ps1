@@ -56,8 +56,10 @@ function Get-AdoCurrentUserId {
       Returns the id of the authenticated identity (PAT owner, build identity, or Entra principal).
     .DESCRIPTION
       Reads authenticatedUser.id from the organization-level _apis/connectionData endpoint and caches
-      it on the session (AuthenticatedUserId) so it is resolved once per session. Throws a clear
-      error when the id cannot be resolved.
+      it on the session (AuthenticatedUserId, plus AuthenticatedUserKey: a SHA-256 fingerprint of
+      org + Authorization) so it is resolved once per session credential. Explicit -Headers that
+      differ from the session's are resolved on every call and never touch the cache. Throws a
+      clear error when the id cannot be resolved.
     .PARAMETER Force  Ignore the cached value and query again.
     #>
     param(
@@ -67,13 +69,38 @@ function Get-AdoCurrentUserId {
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
+    # The session cache is used and written only when the effective credential is the session's
+    # own (same org, same Authorization value). It is keyed by a SHA-256 fingerprint of org +
+    # Authorization, so replacing the session headers in place invalidates it; the raw header is
+    # never stored. Explicit -Headers of another credential always resolve their own id.
     $session = $null
     try { $session = $script:AdoSession } catch { $session = $null }
-    $sameOrg = $null -ne $session -and $session.PSObject.Properties['Org'] -and $session.Org -eq $Org
+    $authOf = {
+        param($h)
+        if ($h -is [System.Collections.IDictionary] -and $h.Contains('Authorization')) { [string]$h['Authorization'] } else { '' }
+    }
+    $effectiveAuth = & $authOf $Headers
+    $useCache = $false
+    if ($null -ne $session -and $effectiveAuth -and
+        $session.PSObject.Properties['Org'] -and $session.Org -eq $Org -and
+        $session.PSObject.Properties['Headers']) {
+        $useCache = [string]::Equals((& $authOf $session.Headers), $effectiveAuth, [StringComparison]::Ordinal)
+    }
+    $fingerprint = $null
+    if ($useCache) {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $bytes = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes("$Org`n$effectiveAuth"))
+            $fingerprint = -join ($bytes | ForEach-Object { $_.ToString('x2') })
+        } finally { $sha.Dispose() }
 
-    if ($sameOrg -and -not $Force) {
-        $cached = $session.PSObject.Properties['AuthenticatedUserId']
-        if ($cached -and $cached.Value) { return [string]$cached.Value }
+        if (-not $Force) {
+            $cachedId  = $session.PSObject.Properties['AuthenticatedUserId']
+            $cachedKey = $session.PSObject.Properties['AuthenticatedUserKey']
+            if ($cachedId -and $cachedId.Value -and $cachedKey -and $cachedKey.Value -eq $fingerprint) {
+                return [string]$cachedId.Value
+            }
+        }
     }
 
     $uri = "$(Get-AdoBaseUrl $Org)/_apis/connectionData"
@@ -90,10 +117,24 @@ function Get-AdoCurrentUserId {
                'Pass -ReviewerId explicitly.')
     }
 
-    if ($sameOrg) {
-        $session | Add-Member -NotePropertyName AuthenticatedUserId -NotePropertyValue $id -Force
+    if ($useCache) {
+        $session | Add-Member -NotePropertyName AuthenticatedUserId  -NotePropertyValue $id -Force
+        $session | Add-Member -NotePropertyName AuthenticatedUserKey -NotePropertyValue $fingerprint -Force
     }
     return $id
+}
+
+function Get-AdoCanonicalValue {
+    <#
+    .SYNOPSIS  Internal: returns the documented spelling of a ValidateSet value (ValidateSet is case-insensitive).
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Value,
+        [Parameter(Mandatory)][string[]]$Allowed
+    )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    foreach ($a in $Allowed) { if ($a -eq $Value) { return $a } }
+    throw "Unexpected value '$Value'. Allowed: $($Allowed -join ', ')"
 }
 
 function Get-AdoValueList {
@@ -113,25 +154,46 @@ function Invoke-AdoGetSkipPaged {
     .PARAMETER Uri       URL including api-version; must not carry $top / $skip.
     .PARAMETER PageSize  Items per request.
     .PARAMETER MaxItems  Stop after this many items (0 = no limit).
+    .PARAMETER MaxPages  Hard cap on requests (default 1000); stops with a warning when reached.
+    .NOTES     Stops with a warning when a page is identical to the previous one (a server that
+               ignores $skip would otherwise be paged forever).
     #>
     param(
         [Parameter(Mandatory)][string]$Uri,
         [hashtable]$Headers,
         [int]$PageSize = 100,
-        [int]$MaxItems = 0
+        [int]$MaxItems = 0,
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$MaxPages = 1000
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     if ($PageSize -lt 1) { throw 'PageSize must be at least 1.' }
     if ($MaxItems -gt 0 -and $MaxItems -lt $PageSize) { $PageSize = $MaxItems }
 
-    $items = [System.Collections.Generic.List[object]]::new()
-    $skip  = 0
-    $sep   = if ($Uri.Contains('?')) { '&' } else { '?' }
+    $items     = [System.Collections.Generic.List[object]]::new()
+    $skip      = 0
+    $pages     = 0
+    $lastPage  = $null
+    $sep       = if ($Uri.Contains('?')) { '&' } else { '?' }
     while ($true) {
+        if ($pages -ge $MaxPages) {
+            Write-Warning "Stopped paging after $MaxPages pages ($($items.Count) items); results may be incomplete: $Uri"
+            break
+        }
+        $pages++
         $r = Invoke-AdoGet -Uri "$Uri$sep`$top=$PageSize&`$skip=$skip" -Headers $Headers
         $page = @()
         $vp = if ($null -ne $r) { $r.PSObject.Properties['value'] } else { $null }
         if ($vp -and $null -ne $vp.Value) { $page = @($vp.Value) }
+
+        if ($page.Count -gt 0) {
+            $sig = ConvertTo-Json -InputObject $page -Depth 3 -Compress
+            if ($null -ne $lastPage -and $sig -eq $lastPage) {
+                Write-Warning "Server repeated the same page (skip=$skip ignored?); stopped paging to avoid an endless loop: $Uri"
+                break
+            }
+            $lastPage = $sig
+        }
         foreach ($i in $page) { $items.Add($i) }
 
         if ($MaxItems -gt 0 -and $items.Count -ge $MaxItems) {
@@ -178,7 +240,7 @@ function Get-AdoPullRequests {
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $q = [System.Collections.Generic.List[string]]::new()
-    if ($Status)       { $q.Add("searchCriteria.status=$Status") }
+    if ($Status)       { $q.Add("searchCriteria.status=$(Get-AdoCanonicalValue $Status -Allowed 'active', 'abandoned', 'completed', 'all', 'notSet')") }
     if ($CreatorId)    { $q.Add("searchCriteria.creatorId=$([uri]::EscapeDataString($CreatorId))") }
     if ($ReviewerId)   { $q.Add("searchCriteria.reviewerId=$([uri]::EscapeDataString($ReviewerId))") }
     if ($SourceBranch) { $q.Add("searchCriteria.sourceRefName=$([uri]::EscapeDataString((ConvertTo-AdoRefName $SourceBranch)))") }
@@ -414,6 +476,11 @@ function Complete-AdoPullRequest {
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
+    $MergeStrategy = Get-AdoCanonicalValue $MergeStrategy -Allowed 'noFastForward', 'squash', 'rebase', 'rebaseMerge'
+    $at = if ($LastMergeSourceCommitId) { $LastMergeSourceCommitId } else { 'its current source commit' }
+    # ShouldProcess first: -WhatIf sends no request at all, not even the pre-flight read.
+    if (-not $PSCmdlet.ShouldProcess("PR #$PullRequestId", "PATCH - Complete ($MergeStrategy) at $at")) { return $null }
+
     if (-not $LastMergeSourceCommitId) {
         $pr = Get-AdoPullRequest -RepoId $RepoId -PullRequestId $PullRequestId `
             -Org $Org -Project $Project -ApiV $ApiV -Headers $Headers
@@ -434,8 +501,6 @@ function Complete-AdoPullRequest {
                                     -TransitionWorkItems ([bool]$TransitionWorkItems) `
                                     -MergeCommitMessage $MergeCommitMessage
     }
-
-    if (-not $PSCmdlet.ShouldProcess("PR #$PullRequestId", "PATCH - Complete ($MergeStrategy) at $LastMergeSourceCommitId")) { return $null }
 
     try {
         $r = Invoke-AdoRequest -Method PATCH -Headers $Headers -Body (ConvertTo-Json -InputObject $body -Depth 6) `
@@ -486,9 +551,13 @@ function Set-AdoPullRequestAutoComplete {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    $MergeStrategy = Get-AdoCanonicalValue $MergeStrategy -Allowed 'noFastForward', 'squash', 'rebase', 'rebaseMerge'
+    $action = if ($Disable) { 'PATCH - Disable auto-complete' } else { "PATCH - Enable auto-complete ($MergeStrategy)" }
+    # ShouldProcess first: -WhatIf sends no request at all, not even the connectionData read.
+    if (-not $PSCmdlet.ShouldProcess("PR #$PullRequestId", $action)) { return $null }
+
     if ($Disable) {
         $body = [ordered]@{ autoCompleteSetBy = @{ id = [guid]::Empty.ToString() } }
-        $action = 'PATCH - Disable auto-complete'
     } else {
         $body = [ordered]@{
             autoCompleteSetBy = @{ id = Get-AdoCurrentUserId -Org $Org -Headers $Headers }
@@ -497,9 +566,7 @@ function Set-AdoPullRequestAutoComplete {
                                     -TransitionWorkItems ([bool]$TransitionWorkItems) `
                                     -MergeCommitMessage $MergeCommitMessage
         }
-        $action = "PATCH - Enable auto-complete ($MergeStrategy)"
     }
-    if (-not $PSCmdlet.ShouldProcess("PR #$PullRequestId", $action)) { return $null }
     return Invoke-AdoRequest -Method PATCH -Headers $Headers -Body (ConvertTo-Json -InputObject $body -Depth 6) `
         -Uri (Get-AdoPullRequestUri -RepoId $RepoId -PullRequestId $PullRequestId -Org $Org -Project $Project -ApiV $ApiV)
 }
@@ -592,11 +659,14 @@ function Set-AdoPullRequestVote {
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $values = @{ Approve = 10; ApproveWithSuggestions = 5; NoVote = 0; WaitForAuthor = -5; Reject = -10 }
+    $Vote   = Get-AdoCanonicalValue $Vote -Allowed 'Approve', 'ApproveWithSuggestions', 'NoVote', 'WaitForAuthor', 'Reject'
+    $who    = if ($ReviewerId) { $ReviewerId } else { 'the authenticated user' }
+    # ShouldProcess first: -WhatIf sends no request at all, not even the connectionData read.
+    if (-not $PSCmdlet.ShouldProcess("PR #$PullRequestId", "PUT - Vote $Vote ($($values[$Vote])) as $who")) { return $null }
     if (-not $ReviewerId) { $ReviewerId = Get-AdoCurrentUserId -Org $Org -Headers $Headers }
 
     $uri  = "$(Get-AdoPullRequestRepoUri -RepoId $RepoId -Org $Org -Project $Project)/pullrequests/$PullRequestId/reviewers/$([uri]::EscapeDataString($ReviewerId))?api-version=$ApiV"
     $body = @{ id = $ReviewerId; vote = $values[$Vote] }
-    if (-not $PSCmdlet.ShouldProcess("PR #$PullRequestId", "PUT - Vote $Vote ($($values[$Vote])) as $ReviewerId")) { return $null }
     return Invoke-AdoRequest -Method PUT -Uri $uri -Body ($body | ConvertTo-Json) -Headers $Headers
 }
 
@@ -683,7 +753,7 @@ function New-AdoPullRequestThread {
 
     $body = [ordered]@{
         comments = @(@{ parentCommentId = 0; content = $Content; commentType = 'text' })
-        status   = $Status
+        status   = Get-AdoCanonicalValue $Status -Allowed 'active', 'fixed', 'wontFix', 'closed', 'byDesign', 'pending'
     }
     if ($FilePath) {
         $path = if ($FilePath.StartsWith('/')) { $FilePath } else { "/$FilePath" }
@@ -749,7 +819,7 @@ function Set-AdoPullRequestThreadStatus {
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     # ValidateSet is case-insensitive; send the documented camelCase spelling.
-    $canonical = @('active', 'fixed', 'wontFix', 'closed', 'byDesign', 'pending') | Where-Object { $_ -eq $Status }
+    $canonical = Get-AdoCanonicalValue $Status -Allowed 'active', 'fixed', 'wontFix', 'closed', 'byDesign', 'pending'
     $uri = Get-AdoPullRequestUri -RepoId $RepoId -PullRequestId $PullRequestId -SubPath "threads/$ThreadId" -Org $Org -Project $Project -ApiV $ApiV
     if (-not $PSCmdlet.ShouldProcess("PR #$PullRequestId thread $ThreadId", "PATCH - Status $canonical")) { return $null }
     return Invoke-AdoRequest -Method PATCH -Uri $uri -Body (@{ status = $canonical } | ConvertTo-Json) -Headers $Headers
@@ -978,7 +1048,7 @@ function New-AdoPullRequestStatus {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    $canonical = @('notSet', 'pending', 'succeeded', 'failed', 'error', 'notApplicable') | Where-Object { $_ -eq $State }
+    $canonical = Get-AdoCanonicalValue $State -Allowed 'notSet', 'pending', 'succeeded', 'failed', 'error', 'notApplicable'
     $context = [ordered]@{ name = $ContextName }
     if ($ContextGenre) { $context.genre = $ContextGenre }
     $body = [ordered]@{ state = $canonical; context = $context }

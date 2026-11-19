@@ -372,6 +372,7 @@ function Invoke-AdoRequest {
       GET/PUT/DELETE retry on 429, 503 and other transient errors. POST/PATCH retry only on
       429 (rejected before processing); any other error is thrown immediately, unretried.
       A 429 Retry-After header (seconds) is honoured when present.
+      A 409 Conflict is never retried, for any method; the original error is rethrown.
       A Conditional Access rejection (VS403463) is thrown as ErrorId AdoConditionalAccess and
       is never retried.
     #>
@@ -486,6 +487,13 @@ function Invoke-AdoRequest {
             # 404: do not retry - resource does not exist
             if ($status -eq 404) {
                 throw "404 Not Found - resource not found: $Uri"
+            }
+
+            # 409: do not retry for any method - the conflict is deterministic (state, merge
+            # conflict, stale commit). The original error is rethrown so callers keep the status
+            # code (Exception.Response.StatusCode) and the server message (ErrorDetails).
+            if ($status -eq 409) {
+                throw $lastErr
             }
 
             # POST/PATCH are not idempotent: past this point only a 429 (rejected before the
@@ -648,6 +656,8 @@ function Invoke-AdoGetPaged {
                     throw "400 Bad Request - $pageUri`n$body400"
                 }
                 if ($status -eq 404) { throw "404 Not Found - resource not found: $pageUri" }
+                # 409: deterministic conflict, never retried (same as Invoke-AdoRequest).
+                if ($status -eq 409) { throw $lastErr }
 
                 if ($attempt -lt $MaxRetries) {
                     if ($status -in 429, 503) {
