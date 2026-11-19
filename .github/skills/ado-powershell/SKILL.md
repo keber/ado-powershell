@@ -67,7 +67,9 @@ $AdoSession = Initialize-AdoSession -ConfigPath "$HOME/.config/ado/config.json" 
 **Config resolution order** (for each value - first non-empty wins):
 1. Explicit parameter (`-Org`, `-Project`, `-Pat`, `-ApiV`, `-BaseUrl`)
 2. Environment variable (`ADO_ORG`, `ADO_PROJECT`, `ADO_PAT` -> `AZURE_DEVOPS_EXT_PAT`, `ADO_API_VER`)
-3. Config file (`-ConfigPath`) - JSON keys: `org`, `project`, `pat`, `apiVersion`, `baseUrl`
+3. Config file (`-ConfigPath`) - JSON keys: `org`, `project`, `apiVersion`, `baseUrl` (leave `baseUrl` empty to derive `https://dev.azure.com/<org>`; a bare `https://dev.azure.com` gets the org appended)
+
+Keep the config file outside the repo (e.g. `$HOME/.config/ado/config.json`) and provide the PAT via `ADO_PAT`. A `pat` key in the config file is still read for backward compatibility but is discouraged; `references/config.json` no longer ships one.
 
 Missing required values (`Org`, `Project`, `Pat`) throw a clear error - no silent fake defaults.
 
