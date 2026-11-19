@@ -28,6 +28,7 @@ Supports **🔵 read** operations (no side effects) and
 >    - [references/testing.md](references/testing.md) - Test Plans, Suites, Cases, Runs, Results
 >    - [references/pipelines.md](references/pipelines.md) - List, query, and trigger Pipelines
 >    - [references/git.md](references/git.md) - Repositories, Branches, Iterations
+>    - [references/pullrequests.md](references/pullrequests.md) - Pull requests: create, review, vote, comment, complete
 >    Read **only the domain file you need** - not all of them.
 
 ---
@@ -210,6 +211,26 @@ Full docs: [references/base.md](references/base.md)
 | `Get-AdoRepositories` | Git repositories in the project |
 | `Get-AdoBranches -RepoId <id>` | Branches of a repository |
 
+### 🔵 Pull requests   ·   [references/pullrequests.md](references/pullrequests.md)
+
+`-RepoId` takes a repository name or id; branches accept `main` or `refs/heads/main`.
+
+| Function | Description |
+|----------|-------------|
+| `Get-AdoPullRequests -RepoId <r> [-Status] [-TargetBranch] [-Top]` | List PRs (search criteria, paged) |
+| `Get-AdoPullRequest -PullRequestId <n> [-RepoId <r>]` | One PR |
+| `New-AdoPullRequest -RepoId <r> -SourceBranch <b> -TargetBranch <b> -Title <t>` | 🔴 Create (draft, reviewers, work items, labels) |
+| `Set-AdoPullRequest -RepoId <r> -PullRequestId <n> [-Title] [-Description] [-Draft\|-Publish] [-TargetBranch]` | 🔴 Edit / publish / retarget |
+| `Stop-AdoPullRequest` / `Restore-AdoPullRequest` | 🔴 Abandon (High) / reactivate |
+| `Complete-AdoPullRequest -RepoId <r> -PullRequestId <n> [-MergeStrategy] [-DeleteSourceBranch]` | 🔴 Merge (High); 409 → `AdoPullRequestConflict` |
+| `Set-AdoPullRequestAutoComplete [-Disable]` | 🔴 Auto-complete as the current user |
+| `Get-AdoPullRequestReviewers` / `Add-` / `Remove-AdoPullRequestReviewer` | Reviewers (🔴 add/remove) |
+| `Set-AdoPullRequestVote -Vote <Approve\|ApproveWithSuggestions\|NoVote\|WaitForAuthor\|Reject>` / `Approve-AdoPullRequest` | 🔴 Vote as the authenticated user |
+| `Get-AdoPullRequestThreads` / `New-AdoPullRequestThread` / `Add-AdoPullRequestComment` / `Set-AdoPullRequestThreadStatus` | Threads and comments (🔴 writes) |
+| `Get-AdoPullRequestIterations` / `Get-AdoPullRequestChanges` / `Get-AdoPullRequestCommits` / `Get-AdoPullRequestWorkItems` | Inspect a PR |
+| `Get-AdoPullRequestLabels` / `Add-` / `Remove-AdoPullRequestLabel` | Labels (🔴 add/remove) |
+| `Get-AdoPullRequestStatuses` / `New-AdoPullRequestStatus` | Statuses (🔴 post) |
+
 ---
 
 ## Quick validation
@@ -234,6 +255,7 @@ Full script → [assets/smoke-test.ps1](assets/smoke-test.ps1)
 - [Testing - full parameter docs + examples](references/testing.md)
 - [Pipelines - full parameter docs + examples](references/pipelines.md)
 - [Git & Iterations - full parameter docs + examples](references/git.md)
+- [Pull requests - full parameter docs + examples](references/pullrequests.md)
 - [ADO API v7.1 endpoint reference](references/endpoints.md)
 - [Error handling, HTTP codes and PAT permissions](references/errors.md)
 - [Error handling, HTTP codes and PAT permissions](references/errors.md)

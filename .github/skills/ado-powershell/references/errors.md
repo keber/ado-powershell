@@ -70,7 +70,9 @@ Invoke-RestMethod -Uri "https://dev.azure.com/$env:ADO_ORG/_apis/projects?api-ve
 | `Work Items (Read & Write)` | `New-AdoWorkItem`, `Update-AdoWorkItem`, `Add-AdoWorkItemComment`, `Add-AdoWorkItemLink`, `Add-AdoWorkItemAttachment` |
 | `Test Management (Read)` | `Get-AdoTestPlans`, `Get-AdoTestPlan`, `Get-AdoTestSuites`, `Get-AdoTestCases`, `Get-AdoTestRuns`, `Get-AdoTestRunResults` |
 | `Test Management (Read & Write)` | `New-AdoTestPlan`, `New-AdoTestSuite`, `New-AdoTestCase`, `Add-AdoTestCaseToSuite`, `New-AdoTestRun`, `Update-AdoTestRunResults` |
-| `Code (Read)` | `Get-AdoRepositories`, `Get-AdoBranches` |
+| `Code (Read)` | `Get-AdoRepositories`, `Get-AdoBranches`, every `Get-AdoPullRequest*` function |
+| `Code (Read & Write)` | `New-/Set-/Stop-/Restore-/Complete-AdoPullRequest`, auto-complete, reviewers and votes, threads and comments, labels |
+| `Code (Status)` | `New-AdoPullRequestStatus` (scope name per the PAT UI; not verified against a real org) |
 | `Build (Read)` | `Get-AdoPipelines`, `Get-AdoPipelineRuns` |
 | `Build (Read & Execute)` | `Invoke-AdoPipelineRun` |
 | `Project and Team (Read)` | `Get-AdoProjects`, `Get-AdoTeams`, `Get-AdoIterations` |
