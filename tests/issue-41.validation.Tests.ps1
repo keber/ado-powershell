@@ -85,31 +85,9 @@ BeforeAll {
         return $a
     }
 
-    # The scanner from tests/issue-41.Tests.ps1, copied verbatim, to probe its precision.
-    function script:Test-RawSegment($e) {
-        if ($e -is [System.Management.Automation.Language.VariableExpressionAst]) {
-            return (($e.VariablePath.UserPath -replace '^(script|global|local):', '') -in @('Project', 'Team'))
-        }
-        if ($e -is [System.Management.Automation.Language.MemberExpressionAst]) {
-            return ($e.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $e.Member.Value -eq 'Project')
-        }
-        if ($e -is [System.Management.Automation.Language.SubExpressionAst]) {
-            $stmts = @($e.SubExpression.Statements)
-            if ($stmts.Count -eq 1 -and $stmts[0] -is [System.Management.Automation.Language.PipelineAst]) {
-                $els = @($stmts[0].PipelineElements)
-                if ($els.Count -eq 1 -and $els[0] -is [System.Management.Automation.Language.CommandExpressionAst]) {
-                    return (Test-RawSegment $els[0].Expression)
-                }
-            }
-        }
-        return $false
-    }
-    function script:Find-RawUrlInterpolation($Ast) {
-        @($Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.ExpandableStringExpressionAst] }, $true) |
-            Where-Object { $_.Value -match '_apis|://|Get-AdoBaseUrl' } |
-            Where-Object { @($_.NestedExpressions | Where-Object { Test-RawSegment $_ }).Count -gt 0 } |
-            ForEach-Object { "line $($_.Extent.StartLineNumber): $($_.Extent.Text)" })
-    }
+    # Adjusted by the implementer: the scanner used to be copied verbatim from issue-41.Tests.ps1,
+    # so a fixed scanner could never make V41-001 pass. Both files now dot-source the shared scanner.
+    . (Join-Path $PSScriptRoot 'helpers\UrlSegmentScan.ps1')
 }
 
 Describe 'V41: every function with -Project sends the project escaped exactly once (enumerated from source)' {
@@ -236,14 +214,16 @@ Describe 'V41: other free-text segments and query values' {
         $script:Calls[0].Uri | Should -BeLike "$script:Base/QA%20%231/A%2FB%20100%25/_apis/work/teamsettings/iterations?*"
     }
 
-    It 'V41-003 Get-AdoIterations -TimeFrame is escaped as a query value' {
-        Get-AdoIterations -TimeFrame 'current&x=1' | Out-Null
-        $script:Calls[0].Uri | Should -BeLike '*$timeframe=current%26x%3D1'
+    # Adjusted by the implementer: the requested fix is a ValidateSet, so an injected value is now
+    # rejected at parameter binding (no request) instead of being escaped into the query string.
+    It 'V41-003 Get-AdoIterations -TimeFrame rejects an injected query value before sending' {
+        { Get-AdoIterations -TimeFrame 'current&x=1' } | Should -Throw
+        $script:Calls.Count | Should -Be 0
     }
 
-    It 'V41-003 Get-AdoWorkItem -Expand is escaped as a query value' {
-        Get-AdoWorkItem -Id 7 -Expand 'All&x=1' | Out-Null
-        $script:Calls[0].Uri | Should -BeLike '*$expand=All%26x%3D1&api-version=7.1'
+    It 'V41-003 Get-AdoWorkItem -Expand rejects an injected query value before sending' {
+        { Get-AdoWorkItem -Id 7 -Expand 'All&x=1' } | Should -Throw
+        $script:Calls.Count | Should -Be 0
     }
 }
 
@@ -254,14 +234,16 @@ Describe 'V41: dot segments in project/repository' {
         Set-HttpMocks
     }
 
-    It 'V41-002 project ".." does not climb out of the organization after URI normalisation' {
-        Get-AdoRepositories -Project '..' | Out-Null
-        ([uri]$script:Calls[0].Uri).AbsolutePath | Should -BeLike '/o/*/_apis/*'
+    # Adjusted by the implementer: the requested fix rejects dot segments, so the call now throws
+    # before any request instead of sending a normalised URL.
+    It 'V41-002 project ".." is rejected before any request (cannot climb out of the organization)' {
+        { Get-AdoRepositories -Project '..' } | Should -Throw '*dot segment*'
+        $script:Calls.Count | Should -Be 0
     }
 
-    It 'V41-002 repository ".." does not replace the repository route' {
-        Get-AdoPullRequestReviewers -RepoId '..' -PullRequestId 4 | Out-Null
-        ([uri]$script:Calls[0].Uri).AbsolutePath | Should -BeLike '/o/p/_apis/git/repositories/*/pullrequests/4/reviewers'
+    It 'V41-002 repository ".." is rejected before any request (cannot replace the repository route)' {
+        { Get-AdoPullRequestReviewers -RepoId '..' -PullRequestId 4 } | Should -Throw '*dot segment*'
+        $script:Calls.Count | Should -Be 0
     }
 }
 

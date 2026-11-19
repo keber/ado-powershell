@@ -167,59 +167,126 @@ Describe 'Write guards still apply with an escaped project' {
     }
 }
 
-Describe 'Source scan: no raw project/team interpolation into a URL' {
-    # Flags an expandable string that interpolates $Project / $Team / $AdoSession.Project directly
-    # (as "$Project" or "$($x.Project)") AND looks like a URL ("_apis", "://" or Get-AdoBaseUrl).
-    # Non-URL strings such as cache keys ("$Org/$Project/$Type") are not flagged.
-    BeforeAll {
-        function script:Test-RawSegment($e) {
-            if ($e -is [System.Management.Automation.Language.VariableExpressionAst]) {
-                return (($e.VariablePath.UserPath -replace '^(script|global|local):', '') -in @('Project', 'Team'))
-            }
-            if ($e -is [System.Management.Automation.Language.MemberExpressionAst]) {
-                return ($e.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $e.Member.Value -eq 'Project')
-            }
-            if ($e -is [System.Management.Automation.Language.SubExpressionAst]) {
-                $stmts = @($e.SubExpression.Statements)
-                if ($stmts.Count -eq 1 -and $stmts[0] -is [System.Management.Automation.Language.PipelineAst]) {
-                    $els = @($stmts[0].PipelineElements)
-                    if ($els.Count -eq 1 -and $els[0] -is [System.Management.Automation.Language.CommandExpressionAst]) {
-                        return (Test-RawSegment $els[0].Expression)
-                    }
-                }
-            }
-            return $false
-        }
-        function script:Find-RawUrlInterpolation($Ast) {
-            @($Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.ExpandableStringExpressionAst] }, $true) |
-                Where-Object { $_.Value -match '_apis|://|Get-AdoBaseUrl' } |
-                Where-Object { @($_.NestedExpressions | Where-Object { Test-RawSegment $_ }).Count -gt 0 } |
-                ForEach-Object { "line $($_.Extent.StartLineNumber): $($_.Extent.Text)" })
-        }
-    }
+Describe 'Source scan: no raw free-text value interpolated into a URL' {
+    # Scanner shared with tests/issue-41.validation.Tests.ps1 (tests/helpers/UrlSegmentScan.ps1).
+    BeforeAll { . (Join-Path $PSScriptRoot 'helpers\UrlSegmentScan.ps1') }
 
-    It '<Name> builds every project/team URL segment through an escaping helper' -TestCases $ScriptCases {
+    It '<Name> builds every free-text URL segment through an escaping helper' -TestCases $ScriptCases {
         param($Name, $Path)
         $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$null, [ref]$null)
         Find-RawUrlInterpolation $ast | Should -BeNullOrEmpty
     }
 
-    It 'the scan flags raw interpolations and ignores escaped segments and non-URL strings (self-check)' {
-        $src = @'
-function X { param($Org, $Project, $Team)
-  $a = "$(Get-AdoBaseUrl $Org)/$Project/_apis/x"
-  $b = "https://h/$($script:AdoSession.Project)/_apis/y"
-  $c = "$(Get-AdoBaseUrl $Org)/x$teamSeg/$Team/_apis/z"
-  $d = "$Org/$Project/cache-key"
-  $e = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/ok"
-  $f = "$(Get-AdoBaseUrl $Org)/_apis/projects/$([Uri]::EscapeDataString($Project))/teams"
+    It 'flags <Label>' -TestCases @(
+        @{ Label = 'a raw project in an _apis URL';        Src = '$a = "$(Get-AdoBaseUrl $Org)/$Project/_apis/x"' }
+        @{ Label = 'a session project member';             Src = '$b = "https://h/$($script:AdoSession.Project)/_apis/y"' }
+        @{ Label = 'a raw team segment without _apis';     Src = '$t = if ($Team) { "/$Team" } else { "" }' }
+        @{ Label = 'a raw repository id';                  Src = '$r = "$base/repositories/$RepoId/refs"' }
+        @{ Label = 'a raw work item type';                 Src = '$w = "$base/workitems/`$$Type"' }
+        @{ Label = 'a raw label name';                     Src = '$l = "labels/$Name"' }
+        @{ Label = 'a raw reviewer id';                    Src = '$v = "$pr/reviewers/$($ReviewerId)"' }
+        @{ Label = 'a method call on the project';         Src = '$u = "$base/$($Project.Trim())/_apis/x"' }
+        @{ Label = 'an index into the session';            Src = '$u = "$base/$($AdoSession[''Project''])/_apis/x"' }
+        @{ Label = 'a cast of the project';                Src = '$u = "$base/$([string]$Project)/_apis/x"' }
+        @{ Label = 'string formatting with -f';            Src = '$u = "{0}/{1}/_apis/x" -f (Get-AdoBaseUrl $Org), $Project' }
+        @{ Label = 'single-argument -f';                   Src = '$u = ''x/{0}'' -f $Team' }
+        @{ Label = 'concatenation with +';                 Src = '$u = (Get-AdoBaseUrl $Org) + "/" + $Project + "/_apis/x"' }
+        @{ Label = 'an alias of the project';              Src = '$proj = $Project; $u = "$(Get-AdoBaseUrl $Org)/$proj/_apis/x"' }
+        @{ Label = 'an alias of an alias';                 Src = '$p1 = $script:AdoSession.Project; $p2 = $p1; $u = "$base/$p2/x"' }
+    ) {
+        param($Label, $Src)
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($Src, [ref]$null, [ref]$null)
+        @(Find-RawUrlInterpolation $ast).Count | Should -BeGreaterThan 0 -Because "the scan should catch $Label"
+    }
+
+    It 'does not flag <Label>' -TestCases @(
+        @{ Label = 'the project URL helper';               Src = '$e = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/ok"' }
+        @{ Label = 'EscapeDataString on the project';      Src = '$f = "$(Get-AdoBaseUrl $Org)/_apis/projects/$([Uri]::EscapeDataString($Project))/teams"' }
+        @{ Label = 'the path-segment helper';              Src = '$g = "$base/$(ConvertTo-AdoPathSegment -Value $Team -Name Team)/_apis"' }
+        @{ Label = 'a non-URL message without /';          Src = '$m = "POST - Create ${Type}: ''$Title''"' }
+        @{ Label = 'a cache key without /';                Src = '$k = "$Org|$Project|$Type"' }
+        @{ Label = 'an escaped alias';                     Src = '$seg = [Uri]::EscapeDataString($Project); $u = "$base/$seg/_apis"' }
+        @{ Label = 'an untracked variable';                Src = '$u = "$base/fields/$k"' }
+        @{ Label = '-f without a raw value';               Src = '$u = "{0}/_apis/{1}" -f $base, $Id' }
+        @{ Label = '+ with an escaped value';              Src = '$u = $base + "/" + [Uri]::EscapeDataString($Project)' }
+    ) {
+        param($Label, $Src)
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($Src, [ref]$null, [ref]$null)
+        Find-RawUrlInterpolation $ast | Should -BeNullOrEmpty -Because "$Label is safe"
+    }
 }
-'@
-        $ast = [System.Management.Automation.Language.Parser]::ParseInput($src, [ref]$null, [ref]$null)
-        $hits = @(Find-RawUrlInterpolation $ast)
-        $hits.Count | Should -Be 3
-        $hits[0] | Should -BeLike 'line 2:*'
-        $hits[1] | Should -BeLike 'line 3:*'
-        $hits[2] | Should -BeLike 'line 4:*'
+
+Describe 'Dot segments, empty segments and query values (V41-002/003/004)' {
+    BeforeEach {
+        Mock Write-Host { }
+        $script:Calls = [System.Collections.Generic.List[object]]::new()
+        $script:AdoSession = New-Sess
+        Mock Invoke-RestMethod { Record $Method $Uri; [pscustomobject]@{ id = 1; value = @() } }
+        Mock Invoke-WebRequest {
+            Record $Method $Uri
+            [pscustomobject]@{ Headers = @{}; RawContentStream = [IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes('{"value":[]}'))
+                               Content = '{"value":[]}' }
+        }
+    }
+
+    It 'ConvertTo-AdoPathSegment escapes a value once' {
+        ConvertTo-AdoPathSegment -Value 'A/B #1?' -Name 'Team' | Should -BeExactly 'A%2FB%20%231%3F'
+    }
+
+    It 'ConvertTo-AdoPathSegment rejects "<Value>"' -TestCases @(
+        @{ Value = '.' }, @{ Value = '..' }, @{ Value = ' .. ' }, @{ Value = '' }, @{ Value = '   ' }
+    ) {
+        param($Value)
+        { ConvertTo-AdoPathSegment -Value $Value -Name 'Team' } | Should -Throw '*Team*'
+    }
+
+    It 'Get-AdoProjectUrl rejects the dot segment "<Value>"' -TestCases @(@{ Value = '.' }, @{ Value = '..' }, @{ Value = ' . ' }) {
+        param($Value)
+        { Get-AdoProjectUrl -Project $Value } | Should -Throw '*project*'
+    }
+
+    It 'a dot segment throws before any request (<Label>)' -TestCases @(
+        @{ Label = 'project';    Call = { Get-AdoRepositories -Project '..' } }
+        @{ Label = 'repository'; Call = { Get-AdoPullRequestReviewers -RepoId '..' -PullRequestId 4 } }
+        @{ Label = 'branches';   Call = { Get-AdoBranches -RepoId '.' } }
+        @{ Label = 'team';       Call = { Get-AdoIterations -Team '..' } }
+        @{ Label = 'type';       Call = { New-AdoWorkItem -Type '..' -Title 't' -Confirm:$false } }
+        @{ Label = 'label';      Call = { Remove-AdoPullRequestLabel -RepoId 'r' -PullRequestId 4 -Name '..' -Confirm:$false } }
+        @{ Label = 'reviewer';   Call = { Remove-AdoPullRequestReviewer -RepoId 'r' -PullRequestId 4 -ReviewerId '..' -Confirm:$false } }
+        @{ Label = 'teams';      Call = { Get-AdoTeams -Project '..' } }
+    ) {
+        param($Label, $Call)
+        { & $Call } | Should -Throw '*dot segment*'
+        $script:Calls.Count | Should -Be 0
+    }
+
+    It 'V41-004 Get-AdoTeams with an empty project throws and sends nothing' {
+        $script:AdoSession = New-Sess -Project ''
+        { Get-AdoTeams } | Should -Throw '*project*'
+        $script:Calls.Count | Should -Be 0
+    }
+
+    It 'V41-003 Get-AdoIterations -TimeFrame accepts <Value>' -TestCases @(@{ Value = 'past' }, @{ Value = 'current' }, @{ Value = 'future' }) {
+        param($Value)
+        Get-AdoIterations -TimeFrame $Value | Out-Null
+        $script:Calls[0].Uri | Should -BeLike "*&`$timeframe=$Value"
+    }
+
+    It 'V41-003 Get-AdoIterations -TimeFrame rejects a value outside past/current/future' {
+        { Get-AdoIterations -TimeFrame 'current&x=1' } | Should -Throw
+        $script:Calls.Count | Should -Be 0
+    }
+
+    It 'V41-003 Get-AdoWorkItem -Expand accepts <Value>' -TestCases @(
+        @{ Value = 'None' }, @{ Value = 'Relations' }, @{ Value = 'Fields' }, @{ Value = 'Links' }, @{ Value = 'All' }
+    ) {
+        param($Value)
+        Get-AdoWorkItem -Id 7 -Expand $Value | Out-Null
+        $script:Calls[0].Uri | Should -BeLike "*/_apis/wit/workitems/7?`$expand=$Value&api-version=7.1"
+    }
+
+    It 'V41-003 Get-AdoWorkItem -Expand rejects a value outside the WorkItemExpand enum' {
+        { Get-AdoWorkItem -Id 7 -Expand 'All&x=1' } | Should -Throw
+        $script:Calls.Count | Should -Be 0
     }
 }
