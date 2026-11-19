@@ -388,6 +388,151 @@ function Test-AdoTrustedUrl {
     return $false
 }
 
+# -- Paged GET: follows continuation tokens (header or body) and collects every page
+function Invoke-AdoGetPaged {
+    <#
+    .SYNOPSIS
+      GETs a list endpoint and follows its continuation token until every page is collected.
+
+    .DESCRIPTION
+      Several ADO list APIs return the token in the x-ms-continuationtoken response HEADER, others
+      in a continuationToken property of the BODY. Invoke-RestMethod cannot expose headers on
+      Windows PowerShell 5.1, so this uses Invoke-WebRequest and parses the JSON itself (decoded
+      as UTF-8 from the raw bytes, since 5.1 would otherwise decode with the ANSI codepage).
+      Either token location is honoured. Paging stops when no token is returned, when the token
+      repeats, or when -MaxItems items were collected.
+
+      Same error mapping as Invoke-AdoRequest: 401/403/400/404 are not retried; 429/503 back off
+      exponentially; other errors back off linearly.
+
+    .PARAMETER Uri            First-page URL (including api-version). Must not carry continuationToken.
+    .PARAMETER Headers        Auth headers. Default: New-AdoHeaders.
+    .PARAMETER ItemsProperty  Response property holding the items (default: value).
+    .PARAMETER MaxItems       Stop after this many items (0 = no limit).
+    .OUTPUTS  The collected items across all pages.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Uri,
+        [hashtable]$Headers,
+        [string]$ItemsProperty = 'value',
+        [int]$MaxItems         = 0,
+        [int]$MaxRetries       = 3,
+        [int]$RetryDelaySec    = 2
+    )
+
+    if (-not $Headers) { $Headers = New-AdoHeaders }
+
+    $items = [System.Collections.Generic.List[object]]::new()
+    $token = $null
+
+    while ($true) {
+        $pageUri = $Uri
+        if ($token) {
+            $sep     = if ($Uri.Contains('?')) { '&' } else { '?' }
+            $pageUri = "$Uri${sep}continuationToken=$([uri]::EscapeDataString($token))"
+        }
+
+        $attempt  = 0
+        $lastErr  = $null
+        $response = $null
+        while ($attempt -lt $MaxRetries -and $null -eq $response) {
+            $attempt++
+            try {
+                $response = Invoke-WebRequest -Method GET -Uri $pageUri -Headers $Headers `
+                    -UseBasicParsing -ErrorAction Stop
+            }
+            catch {
+                $lastErr = $_
+                $status  = $null
+                try { $status = [int]$_.Exception.Response.StatusCode } catch { }
+
+                if ($status -eq 401) { throw "401 Unauthorized - check ADO_PAT." }
+                if ($status -eq 403) { throw "403 Forbidden - PAT does not have sufficient permissions for: $pageUri" }
+                if ($status -eq 400) {
+                    $body400 = ''
+                    try {
+                        $reader400 = [System.IO.StreamReader]::new($_.Exception.Response.GetResponseStream())
+                        $body400   = $reader400.ReadToEnd()
+                    } catch { }
+                    throw "400 Bad Request - $pageUri`n$body400"
+                }
+                if ($status -eq 404) { throw "404 Not Found - resource not found: $pageUri" }
+
+                if ($attempt -lt $MaxRetries) {
+                    if ($status -in 429, 503) {
+                        $waitSec = $RetryDelaySec * [Math]::Pow(2, $attempt)
+                        Write-Warning "[$status] Rate-limit. Retry $attempt/$MaxRetries in ${waitSec}s..."
+                    } else {
+                        $waitSec = $RetryDelaySec * $attempt
+                        Write-Warning "Error (attempt $attempt/$MaxRetries): $($_.Exception.Message). Retrying in ${waitSec}s..."
+                    }
+                    Start-Sleep -Seconds $waitSec
+                }
+            }
+        }
+        if ($null -eq $response) {
+            throw "Failed after $MaxRetries attempts. Last error: $($lastErr.Exception.Message)"
+        }
+
+        # Decode as UTF-8 from the raw bytes when available (5.1 decodes .Content as ANSI).
+        $text = $null
+        $rawProp = $response.PSObject.Properties['RawContentStream']
+        if ($rawProp -and $rawProp.Value) {
+            $ms = $rawProp.Value
+            $ms.Position = 0
+            $buffer = New-Object byte[] ([int]$ms.Length)
+            [void]$ms.Read($buffer, 0, $buffer.Length)
+            $text = [System.Text.Encoding]::UTF8.GetString($buffer)
+            if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
+        } else {
+            $text = [string]$response.Content
+        }
+
+        $page = $null
+        try { $page = $text | ConvertFrom-Json } catch { $page = $null }
+
+        # Unparseable body: ADO answers a bad PAT with the HTML sign-in page and HTTP 200.
+        # A parseable body goes through the same check (it has the known-property guard).
+        $signIn = if ($null -eq $page) { Test-AdoSignInResponse -Response $text }
+                  else                 { Test-AdoSignInResponse -Response $page }
+        if ($signIn -or $null -eq $page) {
+            throw ("Received an Azure DevOps sign-in page instead of a response. " +
+                   "Check ADO_PAT (valid? expired? correct scopes?), ADO_ORG and " +
+                   "ADO_PROJECT. Request: $pageUri")
+        }
+
+        $itemsProp = $page.PSObject.Properties[$ItemsProperty]
+        if ($itemsProp -and $null -ne $itemsProp.Value) {
+            foreach ($item in @($itemsProp.Value)) { $items.Add($item) }
+        }
+
+        if ($MaxItems -gt 0 -and $items.Count -ge $MaxItems) {
+            if ($items.Count -gt $MaxItems) { $items.RemoveRange($MaxItems, $items.Count - $MaxItems) }
+            break
+        }
+
+        # Token: response header first, then body.
+        $next = $null
+        try {
+            $h = $response.Headers['x-ms-continuationtoken']
+            if ($h) { $next = [string]@($h)[0] }
+        } catch { }
+        if (-not $next) {
+            $tp = $page.PSObject.Properties['continuationToken']
+            if ($tp -and $tp.Value) { $next = [string]$tp.Value }
+        }
+
+        if (-not $next) { break }
+        if ($next -eq $token) {
+            Write-Warning "Continuation token did not advance; stopping to avoid an endless loop: $Uri"
+            break
+        }
+        $token = $next
+    }
+
+    return $items.ToArray()
+}
+
 # -- Authenticated file download: wraps Invoke-WebRequest -OutFile with no business logic
 function Invoke-AdoDownload {
     <#

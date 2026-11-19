@@ -38,8 +38,7 @@ function Get-AdoProjects {
         [string]$ApiV = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
-    $r = Invoke-AdoGet -Uri "$(Get-AdoBaseUrl $Org)/_apis/projects?api-version=$ApiV" -Headers $Headers
-    return $r.value
+    return Invoke-AdoGetPaged -Uri "$(Get-AdoBaseUrl $Org)/_apis/projects?api-version=$ApiV" -Headers $Headers
 }
 
 function Get-AdoTeams {
@@ -52,8 +51,7 @@ function Get-AdoTeams {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
-    $r = Invoke-AdoGet -Uri "$(Get-AdoBaseUrl $Org)/_apis/projects/$Project/teams?api-version=$ApiV" -Headers $Headers
-    return $r.value
+    return Invoke-AdoGetPaged -Uri "$(Get-AdoBaseUrl $Org)/_apis/projects/$Project/teams?api-version=$ApiV" -Headers $Headers
 }
 
 #endregion
@@ -193,8 +191,7 @@ function Get-AdoWorkItemComments {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/workitems/$Id/comments?api-version=$ApiV-preview.3"
-    $r   = Invoke-AdoGet -Uri $uri -Headers $Headers
-    return $r.comments
+    return Invoke-AdoGetPaged -Uri $uri -Headers $Headers -ItemsProperty 'comments'
 }
 
 function Get-AdoWorkItemRevisions {
@@ -208,9 +205,21 @@ function Get-AdoWorkItemRevisions {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
-    $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/workitems/$Id/revisions?api-version=$ApiV"
-    $r   = Invoke-AdoGet -Uri $uri -Headers $Headers
-    return $r.value
+    # Revisions are paged with $top/$skip (no continuation token): keep asking until a page comes
+    # back shorter than $top.
+    $pageSize = 200
+    $skip     = 0
+    $all      = [System.Collections.Generic.List[object]]::new()
+    while ($true) {
+        $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/workitems/$Id/revisions?`$top=$pageSize&`$skip=$skip&api-version=$ApiV"
+        $r   = Invoke-AdoGet -Uri $uri -Headers $Headers
+        $vp  = $r.PSObject.Properties['value']
+        $page = if ($vp -and $null -ne $vp.Value) { @($vp.Value) } else { @() }
+        foreach ($item in $page) { $all.Add($item) }
+        if ($page.Count -lt $pageSize) { break }
+        $skip += $page.Count
+    }
+    return $all.ToArray()
 }
 
 function Get-AdoWorkItemTypeFields {
@@ -273,7 +282,8 @@ function Invoke-AdoWiql {
 
     .NOTES     WIQL uses POST internally, but is a read-only operation.
 
-    .PARAMETER Top     Maximum ids the query may return. ADO caps this at 20000.
+    .PARAMETER Top     Maximum ids the query may return (1..20000). A warning is emitted when the
+                       result count equals -Top, since the result is then likely truncated.
     .PARAMETER Fields  Restrict the fields fetched for each item; also avoids the -Expand All cost.
     .PARAMETER IdsOnly Return the ids the query matched, skipping the fetch entirely.
 
@@ -288,7 +298,7 @@ function Invoke-AdoWiql {
     #>
     param(
         [Parameter(Mandatory)][string]$Query,
-        [int]$Top        = 100,
+        [ValidateRange(1, 20000)][int]$Top = 100,
         [string[]]$Fields,
         [switch]$IdsOnly,
         [string]$Org     = $script:AdoSession.Org,
@@ -323,6 +333,9 @@ function Invoke-AdoWiql {
     elseif (-not $wiProp -or $null -eq $wiProp.Value) { return , ([object[]]@()) }
     else { $ids = @($wiProp.Value | Select-Object -ExpandProperty id) }
     if ($ids.Count -eq 0) { return , ([object[]]@()) }
+    if ($ids.Count -eq $Top) {
+        Write-Warning "WIQL returned exactly -Top ($Top) ids; the result is likely truncated. Narrow the query or raise -Top (max 20000)."
+    }
 
     if ($IdsOnly) { return , ([int[]]$ids) }
 

@@ -31,8 +31,7 @@ function Get-AdoPipelines {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
-    $r = Invoke-AdoGet -Uri "$(Get-AdoBaseUrl $Org)/$Project/_apis/pipelines?api-version=$ApiV" -Headers $Headers
-    return $r.value
+    return Invoke-AdoGetPaged -Uri "$(Get-AdoBaseUrl $Org)/$Project/_apis/pipelines?api-version=$ApiV" -Headers $Headers
 }
 
 function Get-AdoPipelineRuns {
