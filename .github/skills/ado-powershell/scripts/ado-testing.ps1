@@ -37,8 +37,7 @@ function Get-AdoTestPlans {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
-    $r = Invoke-AdoGet -Uri "$(Get-AdoBaseUrl $Org)/$Project/_apis/testplan/plans?api-version=$ApiV" -Headers $Headers
-    return $r.value
+    return Invoke-AdoGetPaged -Uri "$(Get-AdoBaseUrl $Org)/$Project/_apis/testplan/plans?api-version=$ApiV" -Headers $Headers
 }
 
 function Get-AdoTestPlan {
@@ -183,7 +182,11 @@ function Get-AdoTestRuns {
     $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/test/runs?`$top=$Top&api-version=$ApiV"
     if ($PlanId) { $uri += "&planId=$PlanId" }
     $r = Invoke-AdoGet -Uri $uri -Headers $Headers
-    return $r.value
+    $runs = $r.value
+    if (@($runs).Count -eq $Top) {
+        Write-Warning "Get-AdoTestRuns returned exactly -Top ($Top) runs; the list is likely truncated. Raise -Top to see more."
+    }
+    return $runs
 }
 
 function Get-AdoTestRunResults {
@@ -199,7 +202,11 @@ function Get-AdoTestRunResults {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     $r = Invoke-AdoGet -Uri "$(Get-AdoBaseUrl $Org)/$Project/_apis/test/runs/$RunId/results?`$top=$Top&api-version=$ApiV" -Headers $Headers
-    return $r.value
+    $results = $r.value
+    if (@($results).Count -eq $Top) {
+        Write-Warning "Get-AdoTestRunResults returned exactly -Top ($Top) results; the list is likely truncated. Raise -Top to see more."
+    }
+    return $results
 }
 
 #endregion
