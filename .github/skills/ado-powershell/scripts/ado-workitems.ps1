@@ -149,7 +149,7 @@ function Get-AdoWorkItemsBatch {
 
         # Read-only POST: call Invoke-AdoRequest directly (not ShouldProcess)
         $r = Invoke-AdoRequest -Method POST -Uri $uri -Body ($body | ConvertTo-Json -Depth 5) `
-            -ContentType 'application/json' -Headers $Headers
+            -ContentType 'application/json' -Headers $Headers -RetryNonIdempotent
 
         $valueProp = $r.PSObject.Properties['value']
         if ($valueProp -and $null -ne $valueProp.Value) {
@@ -278,7 +278,7 @@ function Invoke-AdoWiql {
     $uri  = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/wiql?`$top=$Top&api-version=$ApiV"
     $body = @{ query = $Query } | ConvertTo-Json
     $r    = Invoke-AdoRequest -Method POST -Uri $uri -Body $body `
-        -ContentType 'application/json' -Headers $Headers
+        -ContentType 'application/json' -Headers $Headers -RetryNonIdempotent
     # A query matching nothing may omit workItems entirely; under StrictMode reading an absent
     # property throws, so check for it before use.
     $wiProp = $r.PSObject.Properties['workItems']
