@@ -47,7 +47,7 @@ function Get-AdoPullRequestRepoUri {
         [string]$Project = $script:AdoSession.Project
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    return "$(Get-AdoBaseUrl $Org)/$Project/_apis/git/repositories/$([uri]::EscapeDataString($RepoId))"
+    return "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/git/repositories/$(ConvertTo-AdoPathSegment -Value $RepoId -Name 'repository')"
 }
 
 function Get-AdoCurrentUserId {
@@ -301,7 +301,7 @@ function Get-AdoPullRequest {
         if ($IncludeCommits)      { $uri += '&includeCommits=true' }
         if ($IncludeWorkItemRefs) { $uri += '&includeWorkItemRefs=true' }
     } else {
-        $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/git/pullrequests/$PullRequestId`?api-version=$ApiV"
+        $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/git/pullrequests/$PullRequestId`?api-version=$ApiV"
     }
     return Invoke-AdoGet -Uri $uri -Headers $Headers
 }
@@ -640,7 +640,7 @@ function Add-AdoPullRequestReviewer {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    $uri  = "$(Get-AdoPullRequestRepoUri -RepoId $RepoId -Org $Org -Project $Project)/pullrequests/$PullRequestId/reviewers/$([uri]::EscapeDataString($ReviewerId))?api-version=$ApiV"
+    $uri  = "$(Get-AdoPullRequestRepoUri -RepoId $RepoId -Org $Org -Project $Project)/pullrequests/$PullRequestId/reviewers/$(ConvertTo-AdoPathSegment -Value $ReviewerId -Name 'reviewer id')?api-version=$ApiV"
     $body = @{ id = $ReviewerId; isRequired = [bool]$Required }
     if (-not $PSCmdlet.ShouldProcess("PR #$PullRequestId", "PUT - Add $(if($Required){'required'}else{'optional'}) reviewer $ReviewerId")) { return $null }
     return Invoke-AdoRequest -Method PUT -Uri $uri -Body ($body | ConvertTo-Json) -Headers $Headers
@@ -662,7 +662,7 @@ function Remove-AdoPullRequestReviewer {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    $uri = "$(Get-AdoPullRequestRepoUri -RepoId $RepoId -Org $Org -Project $Project)/pullrequests/$PullRequestId/reviewers/$([uri]::EscapeDataString($ReviewerId))?api-version=$ApiV"
+    $uri = "$(Get-AdoPullRequestRepoUri -RepoId $RepoId -Org $Org -Project $Project)/pullrequests/$PullRequestId/reviewers/$(ConvertTo-AdoPathSegment -Value $ReviewerId -Name 'reviewer id')?api-version=$ApiV"
     if (-not $PSCmdlet.ShouldProcess("PR #$PullRequestId", "DELETE - Remove reviewer $ReviewerId")) { return $null }
     return Invoke-AdoRequest -Method DELETE -Uri $uri -Headers $Headers
 }
@@ -695,7 +695,7 @@ function Set-AdoPullRequestVote {
     if (-not $PSCmdlet.ShouldProcess("PR #$PullRequestId", "PUT - Vote $Vote ($($values[$Vote])) as $who")) { return $null }
     if (-not $ReviewerId) { $ReviewerId = Get-AdoCurrentUserId -Org $Org -Headers $Headers }
 
-    $uri  = "$(Get-AdoPullRequestRepoUri -RepoId $RepoId -Org $Org -Project $Project)/pullrequests/$PullRequestId/reviewers/$([uri]::EscapeDataString($ReviewerId))?api-version=$ApiV"
+    $uri  = "$(Get-AdoPullRequestRepoUri -RepoId $RepoId -Org $Org -Project $Project)/pullrequests/$PullRequestId/reviewers/$(ConvertTo-AdoPathSegment -Value $ReviewerId -Name 'reviewer id')?api-version=$ApiV"
     $body = @{ id = $ReviewerId; vote = $values[$Vote] }
     return Invoke-AdoRequest -Method PUT -Uri $uri -Body ($body | ConvertTo-Json) -Headers $Headers
 }
@@ -1027,7 +1027,7 @@ function Remove-AdoPullRequestLabel {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    $uri = Get-AdoPullRequestUri -RepoId $RepoId -PullRequestId $PullRequestId -SubPath "labels/$([uri]::EscapeDataString($Name))" -Org $Org -Project $Project -ApiV $ApiV
+    $uri = Get-AdoPullRequestUri -RepoId $RepoId -PullRequestId $PullRequestId -SubPath "labels/$(ConvertTo-AdoPathSegment -Value $Name -Name 'label')" -Org $Org -Project $Project -ApiV $ApiV
     if (-not $PSCmdlet.ShouldProcess("PR #$PullRequestId", "DELETE - Remove label '$Name'")) { return $null }
     return Invoke-AdoRequest -Method DELETE -Uri $uri -Headers $Headers
 }

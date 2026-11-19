@@ -52,7 +52,7 @@ function Get-AdoTeams {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    return Invoke-AdoGetPaged -Uri "$(Get-AdoBaseUrl $Org)/_apis/projects/$Project/teams?api-version=$ApiV" -Headers $Headers
+    return Invoke-AdoGetPaged -Uri "$(Get-AdoBaseUrl $Org)/_apis/projects/$(ConvertTo-AdoPathSegment -Value $Project -Name 'project')/teams?api-version=$ApiV" -Headers $Headers
 }
 
 #endregion
@@ -68,6 +68,7 @@ function Get-AdoWorkItem {
     #>
     param(
         [Parameter(Mandatory)][int]$Id,
+        [ValidateSet('None', 'Relations', 'Fields', 'Links', 'All')]
         [string]$Expand  = 'All',
         [string]$Org     = $script:AdoSession.Org,
         [string]$Project = $script:AdoSession.Project,
@@ -75,7 +76,7 @@ function Get-AdoWorkItem {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/workitems/$Id`?`$expand=$Expand&api-version=$ApiV"
+    $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/wit/workitems/$Id`?`$expand=$([Uri]::EscapeDataString($Expand))&api-version=$ApiV"
     return Invoke-AdoGet -Uri $uri -Headers $Headers
 }
 
@@ -116,6 +117,7 @@ function Get-AdoWorkItemsBatch {
         [AllowEmptyCollection()]
         [int[]]$Ids,
         [string[]]$Fields,
+        [ValidateSet('None', 'Relations', 'Fields', 'Links', 'All')]
         [string]$Expand  = 'All',
         [ValidateRange(1, 200)][int]$BatchSize = 200,
         [ValidateSet('Omit', 'Fail')][string]$ErrorPolicy = 'Omit',
@@ -141,7 +143,7 @@ function Get-AdoWorkItemsBatch {
     # .Count on the result would break under StrictMode.
     if ($Ids.Count -eq 0) { return , ([object[]]@()) }
 
-    $uri     = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/workitemsbatch?api-version=$ApiV"
+    $uri     = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/wit/workitemsbatch?api-version=$ApiV"
     $results = New-Object System.Collections.Generic.List[object]
 
     # The endpoint caps a request at 200 ids and answers 400 beyond it, so walk the ids in
@@ -195,7 +197,7 @@ function Get-AdoWorkItemComments {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/workitems/$Id/comments?api-version=$ApiV-preview.3"
+    $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/wit/workitems/$Id/comments?api-version=$ApiV-preview.3"
     return Invoke-AdoGetPaged -Uri $uri -Headers $Headers -ItemsProperty 'comments'
 }
 
@@ -217,7 +219,7 @@ function Get-AdoWorkItemRevisions {
     $skip     = 0
     $all      = [System.Collections.Generic.List[object]]::new()
     while ($true) {
-        $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/workitems/$Id/revisions?`$top=$pageSize&`$skip=$skip&api-version=$ApiV"
+        $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/wit/workitems/$Id/revisions?`$top=$pageSize&`$skip=$skip&api-version=$ApiV"
         $r   = Invoke-AdoGet -Uri $uri -Headers $Headers
         $vp  = $r.PSObject.Properties['value']
         $page = if ($vp -and $null -ne $vp.Value) { @($vp.Value) } else { @() }
@@ -260,13 +262,13 @@ function Get-AdoWorkItemTypeFields {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    $cacheKey = "$Org/$Project/$Type"
+    $cacheKey = "$Org|$Project|$Type"
     if (-not $Force -and $script:AdoWorkItemTypeFieldCache.ContainsKey($cacheKey)) {
         return $script:AdoWorkItemTypeFieldCache[$cacheKey]
     }
 
-    $typeEncoded = [Uri]::EscapeDataString($Type)
-    $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/workitemtypes/$typeEncoded/fields?api-version=$ApiV"
+    $typeEncoded = ConvertTo-AdoPathSegment -Value $Type -Name 'work item type'
+    $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/wit/workitemtypes/$typeEncoded/fields?api-version=$ApiV"
     $r   = Invoke-AdoGet -Uri $uri -Headers $Headers
     $script:AdoWorkItemTypeFieldCache[$cacheKey] = $r.value
     return $r.value
@@ -314,7 +316,7 @@ function Invoke-AdoWiql {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    $uri  = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/wiql?`$top=$Top&api-version=$ApiV"
+    $uri  = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/wit/wiql?`$top=$Top&api-version=$ApiV"
     $body = @{ query = $Query } | ConvertTo-Json
     # Read-only POST: -ReadOnly keeps WIQL allowed on a Read session.
     $r    = Invoke-AdoRequest -Method POST -Uri $uri -Body $body `
@@ -409,7 +411,7 @@ function New-AdoWorkItem {
         $ops.Add(@{ op='add'; path="/fields/$k"; value=$ExtraFields[$k] })
     }
 
-    $uri  = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/workitems/`$$Type`?api-version=$ApiV"
+    $uri  = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/wit/workitems/`$$(ConvertTo-AdoPathSegment -Value $Type -Name 'work item type')?api-version=$ApiV"
 
     if (-not $PSCmdlet.ShouldProcess($uri, "POST - Create ${Type}: '$Title'")) { return $null }
 
@@ -462,7 +464,7 @@ function Update-AdoWorkItem {
 
     if ($ops.Count -eq 0) { Write-Warning 'No fields specified for update.'; return $null }
 
-    $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/workitems/$Id`?api-version=$ApiV"
+    $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/wit/workitems/$Id`?api-version=$ApiV"
 
     if (-not $PSCmdlet.ShouldProcess($uri, "PATCH - Update WI #$Id")) { return $null }
 
@@ -491,7 +493,7 @@ function Add-AdoWorkItemComment {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/workitems/$Id/comments?api-version=$ApiV-preview.3"
+    $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/wit/workitems/$Id/comments?api-version=$ApiV-preview.3"
 
     if (-not $PSCmdlet.ShouldProcess($uri, "POST - Comment on WI #$Id")) { return $null }
 
@@ -668,7 +670,7 @@ function Add-AdoWorkItemLink {
             attributes = @{ comment = $Comment }
         }
     })
-    $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/workitems/$SourceId`?api-version=$ApiV"
+    $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/wit/workitems/$SourceId`?api-version=$ApiV"
 
     if (-not $PSCmdlet.ShouldProcess($uri, "PATCH - Link #$SourceId -> #$TargetId [$LinkType]")) { return $null }
 
@@ -704,7 +706,7 @@ function Add-AdoWorkItemAttachment {
     if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { throw "Path is not a file: $FilePath" }
 
     $fileName  = Split-Path $full -Leaf
-    $uploadUri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/attachments?fileName=$([Uri]::EscapeDataString($fileName))&api-version=$ApiV"
+    $uploadUri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/wit/attachments?fileName=$([Uri]::EscapeDataString($fileName))&api-version=$ApiV"
 
     if (-not $PSCmdlet.ShouldProcess($uploadUri, "POST - Upload '$fileName' and attach to WI #$Id")) { return $null }
 
@@ -733,7 +735,7 @@ function Add-AdoWorkItemAttachment {
             attributes = @{ comment = $Comment; name = $fileName }
         }
     })
-    $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/wit/workitems/$Id`?api-version=$ApiV"
+    $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/wit/workitems/$Id`?api-version=$ApiV"
     $r = Invoke-AdoRequest -Method PATCH -Uri $uri -Body (ConvertTo-Json -InputObject @($ops) -Depth 6) `
         -ContentType 'application/json-patch+json' -Headers $Headers
     Write-Host "(ok) '$fileName' attached to WI #$Id" -ForegroundColor Green

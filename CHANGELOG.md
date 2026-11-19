@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The project name is now escaped as a URL path segment in every request URL. All
+  `{baseUrl}/{project}/_apis/...` URLs are built through the new `Get-AdoProjectUrl` helper
+  (`scripts/ado-base.ps1`), and `Get-AdoTeams` escapes the project in
+  `_apis/projects/{project}/teams`. A project such as `QA #1` or `R&D?` no longer truncates the URL
+  at `#` or starts the query string early at `?`. Other free-text path segments go through the new
+  `ConvertTo-AdoPathSegment` helper too: the team of `Get-AdoIterations -Team`, the repository
+  (`-RepoId`) of `Get-AdoBranches` and every pull request function, the work item type of
+  `New-AdoWorkItem` / `Get-AdoWorkItemTypeFields`, pull request label names and reviewer ids.
+  Pass plain (unescaped) names; an already percent-encoded name is now encoded again. (#41)
+- An empty value or the dot segment `.` / `..` (after trimming) as project, team, repository, work
+  item type, label or reviewer id now throws before any request, instead of sending
+  `{baseUrl}//_apis/...` or a URL that normalisation shortens (`..` would climb out of the project
+  or replace the repository route). This includes `Get-AdoTeams` with an empty project. (#41)
+- `Get-AdoIterations -TimeFrame` only accepts `past`, `current` or `future` and
+  `Get-AdoWorkItem -Expand` only accepts `None`, `Relations`, `Fields`, `Links` or `All`
+  (`ValidateSet`); both values are also escaped in the query string. (#41)
+- A Pester AST scan (`tests/helpers/UrlSegmentScan.ps1`) fails the build when a free-text value
+  (`$Project`, `$Team`, `$RepoId`, `$Type`, `$Name`, `$ReviewerId`, `.Project`, `['Project']` or a
+  plain alias of them) reaches a string containing `/` without an escaping helper, through string
+  interpolation, `-f` or `+`. (#41)
+
 ## [1.6.0-rc.2] - 2026-11-19
 
 Second release candidate: adds pull request management (#38) and the read/write credential model

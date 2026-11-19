@@ -1077,4 +1077,53 @@ function Get-AdoBaseUrl {
     return "https://dev.azure.com/$Org"
 }
 
+function Get-AdoProjectUrl {
+    <#
+    .SYNOPSIS  Returns '{baseUrl}/{project}' with the project escaped as a single URL path segment.
+    .DESCRIPTION
+      Every project-scoped request URL ('{baseUrl}/{project}/_apis/...') must be built from this
+      helper so a project name containing '#', '?', '%', '&' or spaces cannot truncate the URL,
+      start the query string early or be misread as an escape sequence. The project is escaped
+      exactly once with [Uri]::EscapeDataString; pass the plain (unescaped) project name.
+    .PARAMETER Org      Organization (default: session org). Resolved through Get-AdoBaseUrl.
+    .PARAMETER Project  Plain project name or id (default: session project). Must not be empty.
+    .EXAMPLE   "$(Get-AdoProjectUrl)/_apis/wit/wiql?api-version=7.1"
+    #>
+    param(
+        [string]$Org     = $script:AdoSession.Org,
+        [string]$Project = $script:AdoSession.Project
+    )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    if ([string]::IsNullOrWhiteSpace($Project)) {
+        throw 'Get-AdoProjectUrl: the project is empty. Pass -Project or set it with Initialize-AdoSession.'
+    }
+    return "$(Get-AdoBaseUrl $Org)/$(ConvertTo-AdoPathSegment -Value $Project -Name 'project')"
+}
+
+function ConvertTo-AdoPathSegment {
+    <#
+    .SYNOPSIS  Escapes a free-text value (project, team, repository, type, label...) as ONE URL path segment.
+    .DESCRIPTION
+      Returns [Uri]::EscapeDataString($Value). Throws before any request when the value is empty or
+      whitespace, or is the dot segment '.' or '..' (after trimming): EscapeDataString leaves dots
+      unescaped and URI normalisation would drop the segment or climb one level up the path.
+    .PARAMETER Value  The plain (unescaped) value.
+    .PARAMETER Name   What the value is, for the error message (e.g. 'project', 'team').
+    .EXAMPLE   "$base/_apis/git/repositories/$(ConvertTo-AdoPathSegment -Value $RepoId -Name 'repository')"
+    #>
+    param(
+        [Parameter(Mandatory)][AllowNull()][AllowEmptyString()][string]$Value,
+        [Parameter(Mandatory)][string]$Name
+    )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        throw "The $Name is empty and cannot be used as a URL path segment."
+    }
+    $trimmed = $Value.Trim()
+    if ($trimmed -eq '.' -or $trimmed -eq '..') {
+        throw "The $Name '$trimmed' is a dot segment and cannot be used as a URL path segment (it would be dropped or move up the URL path)."
+    }
+    return [Uri]::EscapeDataString($Value)
+}
+
 #endregion
