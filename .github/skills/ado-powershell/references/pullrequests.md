@@ -27,7 +27,7 @@ Conventions for every function:
 | `-CreatorId` / `-ReviewerId` | | Identity ids |
 | `-SourceBranch` / `-TargetBranch` | | `main` or `refs/heads/main` |
 | `-Top` | | Maximum PRs returned (0 = all) |
-| `-PageSize` | | Items per request (default 100); pages with `$top` / `$skip` |
+| `-PageSize` | | Items per request (default 100); pages with `$top` / `$skip`. Paging stops with a warning if the server repeats a page or after 1000 requests |
 
 ```powershell
 Get-AdoPullRequests -RepoId 'MyRepo' -TargetBranch main |
@@ -111,9 +111,18 @@ options as `Complete-AdoPullRequest`; `-Disable` sends the empty GUID.
 | `Reject` | -10 |
 
 Without `-ReviewerId` the vote is cast as the authenticated identity. `Get-AdoCurrentUserId`
-reads `authenticatedUser.id` from `https://dev.azure.com/{org}/_apis/connectionData` once and
-caches it on the session as `AuthenticatedUserId` (`-Force` re-queries). If the id cannot be
-resolved it throws and asks for `-ReviewerId`.
+reads `authenticatedUser.id` from `https://dev.azure.com/{org}/_apis/connectionData`:
+
+- With the session's own credential it is resolved once and cached on the session as
+  `AuthenticatedUserId`, together with `AuthenticatedUserKey` (a SHA-256 fingerprint of org +
+  Authorization header; the header itself is never stored). Replacing the session headers
+  invalidates the cache; `-Force` re-queries.
+- With explicit `-Headers` of another credential the id is resolved on every call and the
+  session cache is neither read nor written, so votes are cast as the identity that sends them.
+- If the id cannot be resolved it throws and asks for `-ReviewerId`.
+
+The lookup (like the pull request read in `Complete-AdoPullRequest`) happens after the
+`ShouldProcess` check, so `-WhatIf` sends no request at all.
 
 ```powershell
 Set-AdoPullRequestVote -RepoId 'MyRepo' -PullRequestId 42 -Vote WaitForAuthor
