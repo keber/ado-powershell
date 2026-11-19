@@ -38,6 +38,11 @@ function Get-AdoPipelines {
 function Get-AdoPipelineRuns {
     <#
     .SYNOPSIS  Returns recent runs of a pipeline with optional filters.
+    .DESCRIPTION
+        The Pipelines Runs - List API (7.1) supports no filter parameters, so all
+        filters are applied client-side on the runs it returns. Results are ordered
+        most recent first (by createdDate) before -Top is applied.
+    .PARAMETER Top          Maximum number of runs to return after filtering.
     .PARAMETER Branch       Filter by branch name (e.g. 'main' or 'refs/heads/feature/x').
     .PARAMETER State        Filter by run state: notStarted | inProgress | completed.
     .PARAMETER Result       Filter by result: succeeded | failed | canceled | partiallySucceeded.
@@ -59,14 +64,47 @@ function Get-AdoPipelineRuns {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
-    $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/pipelines/$PipelineId/runs?`$top=$Top&api-version=$ApiV"
-    if ($Branch)      { $uri += "&branchName=$([Uri]::EscapeDataString($Branch))" }
-    if ($State)       { $uri += "&runStateFilter=$State"  }
-    if ($Result)      { $uri += "&runResultFilter=$Result" }
-    if ($CreatedFrom) { $uri += "&minTime=$([Uri]::EscapeDataString($CreatedFrom))" }
-    if ($CreatedTo)   { $uri += "&maxTime=$([Uri]::EscapeDataString($CreatedTo))"   }
+    # Runs - List (7.1) documents only api-version, so filters are applied client-side.
+    $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/pipelines/$PipelineId/runs?api-version=$ApiV"
     $r = Invoke-AdoGet -Uri $uri -Headers $Headers
-    return $r.value
+    $runs = @(if ($r.PSObject.Properties['value']) { $r.value })
+
+    # StrictMode-safe property read: returns $null when a property is missing.
+    $prop = { param($o, $n) if ($null -ne $o -and $o.PSObject.Properties[$n]) { $o.$n } else { $null } }
+    $toDate = {
+        param($v)
+        if ($null -eq $v -or "$v" -eq '') { return $null }
+        if ($v -is [datetime]) { return ([datetimeoffset]$v).UtcDateTime }
+        $d = [datetimeoffset]::MinValue
+        if ([datetimeoffset]::TryParse("$v", [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$d)) { return $d.UtcDateTime }
+        throw "Invalid date value: '$v'"
+    }
+    $normRef = { param($v) ("$v") -replace '^refs/heads/', '' }
+
+    $fromDate = & $toDate $CreatedFrom
+    $toDateV  = & $toDate $CreatedTo
+    $branchN  = if ($Branch) { & $normRef $Branch } else { $null }
+
+    $filtered = foreach ($run in $runs) {
+        if ($State  -and (& $prop $run 'state')  -ine $State)  { continue }
+        if ($Result -and (& $prop $run 'result') -ine $Result) { continue }
+        if ($branchN) {
+            $self = & $prop (& $prop (& $prop $run 'resources') 'repositories') 'self'
+            $ref  = & $prop $self 'refName'
+            if ($null -eq $ref -or (& $normRef $ref) -ne $branchN) { continue }
+        }
+        $created = & $toDate (& $prop $run 'createdDate')
+        if ($fromDate -or $toDateV) {
+            if ($null -eq $created) { continue }
+            if ($fromDate -and $created -lt $fromDate) { continue }
+            if ($toDateV  -and $created -gt $toDateV)  { continue }
+        }
+        [pscustomobject]@{ Run = $run; Created = $created }
+    }
+    # Most recent first (runs without createdDate last), then take -Top.
+    $sorted = @($filtered | Sort-Object { if ($null -eq $_.Created) { [datetime]::MinValue } else { $_.Created } } -Descending)
+    return @($sorted | Select-Object -First $Top | ForEach-Object { $_.Run })
 }
 
 #endregion
