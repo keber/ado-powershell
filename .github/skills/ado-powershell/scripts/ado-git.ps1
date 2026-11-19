@@ -32,9 +32,9 @@ function Get-AdoIterations {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    $teamSeg = if ($Team) { "/$Team" } else { '' }
+    $teamSeg = if ($Team) { "/$([Uri]::EscapeDataString($Team))" } else { '' }
     $tfParam = if ($TimeFrame) { "&`$timeframe=$TimeFrame" } else { '' }
-    $uri = "$(Get-AdoBaseUrl $Org)/$Project$teamSeg/_apis/work/teamsettings/iterations?api-version=$ApiV$tfParam"
+    $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)$teamSeg/_apis/work/teamsettings/iterations?api-version=$ApiV$tfParam"
     $r   = Invoke-AdoGet -Uri $uri -Headers $Headers
     return $r.value
 }
@@ -55,7 +55,7 @@ function Get-AdoRepositories {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    $r = Invoke-AdoGet -Uri "$(Get-AdoBaseUrl $Org)/$Project/_apis/git/repositories?api-version=$ApiV" -Headers $Headers
+    $r = Invoke-AdoGet -Uri "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/git/repositories?api-version=$ApiV" -Headers $Headers
     return $r.value
 }
 
@@ -75,7 +75,7 @@ function Get-AdoBranches {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    return Invoke-AdoGetPaged -Uri "$(Get-AdoBaseUrl $Org)/$Project/_apis/git/repositories/$RepoId/refs?filter=heads/&api-version=$ApiV" -Headers $Headers
+    return Invoke-AdoGetPaged -Uri "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/git/repositories/$([Uri]::EscapeDataString($RepoId))/refs?filter=heads/&api-version=$ApiV" -Headers $Headers
 }
 
 #endregion

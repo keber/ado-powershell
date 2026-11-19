@@ -47,7 +47,7 @@ function Get-AdoPullRequestRepoUri {
         [string]$Project = $script:AdoSession.Project
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    return "$(Get-AdoBaseUrl $Org)/$Project/_apis/git/repositories/$([uri]::EscapeDataString($RepoId))"
+    return "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/git/repositories/$([uri]::EscapeDataString($RepoId))"
 }
 
 function Get-AdoCurrentUserId {
@@ -301,7 +301,7 @@ function Get-AdoPullRequest {
         if ($IncludeCommits)      { $uri += '&includeCommits=true' }
         if ($IncludeWorkItemRefs) { $uri += '&includeWorkItemRefs=true' }
     } else {
-        $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/git/pullrequests/$PullRequestId`?api-version=$ApiV"
+        $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/git/pullrequests/$PullRequestId`?api-version=$ApiV"
     }
     return Invoke-AdoGet -Uri $uri -Headers $Headers
 }

@@ -120,6 +120,17 @@ Describe 'Escaped project in request URLs (one function per script)' {
         $script:Calls[0].Uri | Should -BeLike "$script:RdBase/_apis/work/teamsettings/iterations?*"
     }
 
+    It 'ado-git: Get-AdoBranches escapes a repository name passed as -RepoId' {
+        Get-AdoBranches -RepoId 'My Repo#1' -Project 'QA #1' | Out-Null
+        $script:Calls[0].Uri | Should -BeLike "$script:QaBase/_apis/git/repositories/My%20Repo%231/refs?*"
+    }
+
+    It 'ado-workitems: New-AdoWorkItem escapes the project and the work item type' {
+        New-AdoWorkItem -Type 'User Story' -Title 'x' -Project 'R&D?' -Confirm:$false | Out-Null
+        $script:Calls[0].Method | Should -Be 'POST'
+        $script:Calls[0].Uri | Should -BeLike "$script:RdBase/_apis/wit/workitems/`$User%20Story?api-version=*"
+    }
+
     It 'ado-pullrequests: Get-AdoPullRequestReviewers with project "QA #1"' {
         Get-AdoPullRequestReviewers -RepoId MyRepo -PullRequestId 42 -Project 'QA #1' | Out-Null
         $script:Calls[0].Uri | Should -BeLike "$script:QaBase/_apis/git/repositories/MyRepo/pullrequests/42/reviewers?*"

@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The project name is now escaped as a URL path segment in every request URL. All
+  `{baseUrl}/{project}/_apis/...` URLs are built through the new `Get-AdoProjectUrl` helper
+  (`scripts/ado-base.ps1`, `[Uri]::EscapeDataString`), and `Get-AdoTeams` escapes the project in
+  `_apis/projects/{project}/teams`. A project such as `QA #1` or `R&D?` no longer truncates the URL
+  at `#` or starts the query string early at `?`. Also escaped: the team segment of
+  `Get-AdoIterations -Team`, the repository segment of `Get-AdoBranches -RepoId` and the work item
+  type of `New-AdoWorkItem -Type`. Pass plain (unescaped) names; an already percent-encoded project
+  name is now encoded again, and an empty project throws instead of building `{baseUrl}//_apis/...`.
+  A Pester source scan fails the build on a new raw `$Project` / `$Team`
+  interpolation into a URL. (#41)
+
 ## [1.6.0-rc.2] - 2026-11-19
 
 Second release candidate: adds pull request management (#38) and the read/write credential model

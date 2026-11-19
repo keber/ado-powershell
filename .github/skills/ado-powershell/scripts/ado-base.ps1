@@ -1077,4 +1077,27 @@ function Get-AdoBaseUrl {
     return "https://dev.azure.com/$Org"
 }
 
+function Get-AdoProjectUrl {
+    <#
+    .SYNOPSIS  Returns '{baseUrl}/{project}' with the project escaped as a single URL path segment.
+    .DESCRIPTION
+      Every project-scoped request URL ('{baseUrl}/{project}/_apis/...') must be built from this
+      helper so a project name containing '#', '?', '%', '&' or spaces cannot truncate the URL,
+      start the query string early or be misread as an escape sequence. The project is escaped
+      exactly once with [Uri]::EscapeDataString; pass the plain (unescaped) project name.
+    .PARAMETER Org      Organization (default: session org). Resolved through Get-AdoBaseUrl.
+    .PARAMETER Project  Plain project name or id (default: session project). Must not be empty.
+    .EXAMPLE   "$(Get-AdoProjectUrl)/_apis/wit/wiql?api-version=7.1"
+    #>
+    param(
+        [string]$Org     = $script:AdoSession.Org,
+        [string]$Project = $script:AdoSession.Project
+    )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    if ([string]::IsNullOrWhiteSpace($Project)) {
+        throw 'Get-AdoProjectUrl: the project is empty. Pass -Project or set it with Initialize-AdoSession.'
+    }
+    return "$(Get-AdoBaseUrl $Org)/$([Uri]::EscapeDataString($Project))"
+}
+
 #endregion

@@ -37,7 +37,7 @@ function Get-AdoTestPlans {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    return Invoke-AdoGetPaged -Uri "$(Get-AdoBaseUrl $Org)/$Project/_apis/testplan/plans?api-version=$ApiV" -Headers $Headers
+    return Invoke-AdoGetPaged -Uri "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/testplan/plans?api-version=$ApiV" -Headers $Headers
 }
 
 function Get-AdoTestPlan {
@@ -52,7 +52,7 @@ function Get-AdoTestPlan {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    return Invoke-AdoGet -Uri "$(Get-AdoBaseUrl $Org)/$Project/_apis/testplan/plans/$PlanId`?api-version=$ApiV" -Headers $Headers
+    return Invoke-AdoGet -Uri "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/testplan/plans/$PlanId`?api-version=$ApiV" -Headers $Headers
 }
 
 #endregion
@@ -82,7 +82,7 @@ function Get-AdoTestSuites {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    $base = "$(Get-AdoBaseUrl $Org)/$Project"
+    $base = Get-AdoProjectUrl -Org $Org -Project $Project
     $urls = @(
         "$base/_apis/test/plans/$PlanId/suites?api-version=$ApiV",
         "$base/_apis/testplan/Plans/$PlanId/Suites?api-version=$ApiV-preview.2",
@@ -137,7 +137,7 @@ function Get-AdoTestCases {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    $base = "$(Get-AdoBaseUrl $Org)/$Project"
+    $base = Get-AdoProjectUrl -Org $Org -Project $Project
     $urls = @(
         "$base/_apis/test/plans/$PlanId/suites/$SuiteId/testcases?api-version=$ApiV",
         "$base/_apis/testplan/Plans/$PlanId/Suites/$SuiteId/TestCase?api-version=$ApiV-preview.2",
@@ -183,7 +183,7 @@ function Get-AdoTestRuns {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/test/runs?`$top=$Top&api-version=$ApiV"
+    $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/test/runs?`$top=$Top&api-version=$ApiV"
     if ($PlanId) { $uri += "&planId=$PlanId" }
     $r = Invoke-AdoGet -Uri $uri -Headers $Headers
     $runs = $r.value
@@ -206,7 +206,7 @@ function Get-AdoTestRunResults {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    $r = Invoke-AdoGet -Uri "$(Get-AdoBaseUrl $Org)/$Project/_apis/test/runs/$RunId/results?`$top=$Top&api-version=$ApiV" -Headers $Headers
+    $r = Invoke-AdoGet -Uri "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/test/runs/$RunId/results?`$top=$Top&api-version=$ApiV" -Headers $Headers
     $results = $r.value
     if (@($results).Count -eq $Top) {
         Write-Warning "Get-AdoTestRunResults returned exactly -Top ($Top) results; the list is likely truncated. Raise -Top to see more."
@@ -232,7 +232,7 @@ function New-AdoTestRun {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    $uri  = "$(Get-AdoBaseUrl $Org)/$Project/_apis/test/runs?api-version=$ApiV"
+    $uri  = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/test/runs?api-version=$ApiV"
     $body = @{ name = $Name; plan = @{ id = $PlanId } } | ConvertTo-Json
 
     if (-not $PSCmdlet.ShouldProcess($uri, "POST - Create Test Run '$Name' (Plan $PlanId)")) { return $null }
@@ -265,7 +265,7 @@ function Update-AdoTestRunResults {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/test/runs/$RunId/results?api-version=$ApiV"
+    $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/test/runs/$RunId/results?api-version=$ApiV"
 
     if (-not $PSCmdlet.ShouldProcess($uri, "POST - $($Results.Count) results in Run #$RunId")) { return $null }
 
@@ -307,7 +307,7 @@ function New-AdoTestPlan {
     if ($StartDate)     { $body.startDate  = $StartDate     }
     if ($EndDate)       { $body.endDate    = $EndDate       }
 
-    $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/testplan/plans?api-version=$ApiV"
+    $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/testplan/plans?api-version=$ApiV"
 
     if (-not $PSCmdlet.ShouldProcess($uri, "POST - Create Test Plan '$Name'")) {
         Write-Warning "New-AdoTestPlan: ShouldProcess returned false - no API call made. Check `$ConfirmPreference (current: $ConfirmPreference) or pass -Confirm:`$false."
@@ -362,7 +362,7 @@ function New-AdoTestSuite {
         $body.queryString = $QueryString
     }
 
-    $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/testplan/plans/$PlanId/suites?api-version=$ApiV"
+    $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/testplan/plans/$PlanId/suites?api-version=$ApiV"
 
     if (-not $PSCmdlet.ShouldProcess($uri, "POST - Create Test Suite '$Name' in Plan $PlanId")) {
         Write-Warning "New-AdoTestSuite: ShouldProcess returned false - no API call made. Check `$ConfirmPreference (current: $ConfirmPreference) or pass -Confirm:`$false."
@@ -405,7 +405,7 @@ function Update-AdoTestSuite {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    $uri  = "$(Get-AdoBaseUrl $Org)/$Project/_apis/testplan/plans/$PlanId/suites/$SuiteId`?api-version=$ApiV"
+    $uri  = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/testplan/plans/$PlanId/suites/$SuiteId`?api-version=$ApiV"
     $body = @{ name = $Name } | ConvertTo-Json -Depth 3
 
     if (-not $PSCmdlet.ShouldProcess($uri, "PATCH - Rename Suite #$SuiteId to '$Name'")) { return $null }
@@ -446,7 +446,7 @@ function Remove-AdoTestCaseFromSuite {
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     # api-version is pinned to 5.0: this operation exists only on the legacy Test Management API.
-    $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/test/plans/$PlanId/suites/$SuiteId/testcases/$TestCaseId`?api-version=5.0"
+    $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/test/plans/$PlanId/suites/$SuiteId/testcases/$TestCaseId`?api-version=5.0"
 
     if (-not $PSCmdlet.ShouldProcess($uri, "DELETE - Remove TC #$TestCaseId from Suite #$SuiteId")) { return $null }
 
@@ -566,7 +566,7 @@ function Add-AdoTestCaseToSuite {
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
     $body = @($TestCaseIds | ForEach-Object { @{ workItem = @{ id = $_ } } })
-    $uri  = "$(Get-AdoBaseUrl $Org)/$Project/_apis/testplan/plans/$PlanId/suites/$SuiteId/testcase?api-version=$ApiV"
+    $uri  = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/testplan/plans/$PlanId/suites/$SuiteId/testcase?api-version=$ApiV"
 
     if (-not $PSCmdlet.ShouldProcess($uri, "POST - Add $($TestCaseIds.Count) TC(s) to Suite $SuiteId (Plan $($PlanId))")) {
         Write-Warning "Add-AdoTestCaseToSuite: ShouldProcess returned false - no API call made. Check `$ConfirmPreference (current: $($ConfirmPreference)) or pass -Confirm:`$false."

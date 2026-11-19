@@ -31,7 +31,7 @@ function Get-AdoPipelines {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    return Invoke-AdoGetPaged -Uri "$(Get-AdoBaseUrl $Org)/$Project/_apis/pipelines?api-version=$ApiV" -Headers $Headers
+    return Invoke-AdoGetPaged -Uri "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/pipelines?api-version=$ApiV" -Headers $Headers
 }
 
 function Get-AdoPipelineRuns {
@@ -65,7 +65,7 @@ function Get-AdoPipelineRuns {
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     # Runs - List (7.1) documents only api-version, so filters are applied client-side.
-    $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/pipelines/$PipelineId/runs?api-version=$ApiV"
+    $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/pipelines/$PipelineId/runs?api-version=$ApiV"
     $r = Invoke-AdoGet -Uri $uri -Headers $Headers
     $runs = @(if ($r.PSObject.Properties['value']) { $r.value })
 
@@ -152,7 +152,7 @@ function Invoke-AdoPipelineRun {
     if ($TemplateParameters.Count -gt 0){ $body.templateParameters = $TemplateParameters }
     if ($StagesToSkip.Count -gt 0)      { $body.stagesToSkip = $StagesToSkip      }
 
-    $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/pipelines/$PipelineId/runs?api-version=$ApiV"
+    $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/pipelines/$PipelineId/runs?api-version=$ApiV"
 
     if (-not $PSCmdlet.ShouldProcess($uri, "POST - Trigger Pipeline $PipelineId$(if($Branch){" on branch '$Branch'"})")) { return $null }
 
