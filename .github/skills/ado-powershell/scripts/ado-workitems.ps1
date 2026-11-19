@@ -281,10 +281,26 @@ function Invoke-AdoWiql {
         -ContentType 'application/json' -Headers $Headers
     # A query matching nothing may omit workItems entirely; under StrictMode reading an absent
     # property throws, so check for it before use.
-    $wiProp = $r.PSObject.Properties['workItems']
-    if (-not $wiProp -or $null -eq $wiProp.Value) { return , ([object[]]@()) }
-
-    $ids = @($wiProp.Value | Select-Object -ExpandProperty id)
+    $wiProp  = $r.PSObject.Properties['workItems']
+    $relProp = $r.PSObject.Properties['workItemRelations']
+    if ($relProp -and $null -ne $relProp.Value) {
+        # WorkItemLinks (one-hop/tree) queries return workItemRelations instead of workItems.
+        # source is null for root rows; keep distinct ids in first-seen order.
+        $seen = @{}
+        $ids  = @(foreach ($rel in @($relProp.Value)) {
+            foreach ($side in 'source', 'target') {
+                $p = $rel.PSObject.Properties[$side]
+                if (-not $p -or $null -eq $p.Value) { continue }
+                $idProp = $p.Value.PSObject.Properties['id']
+                if (-not $idProp -or $null -eq $idProp.Value) { continue }
+                if ($seen.ContainsKey($idProp.Value)) { continue }
+                $seen[$idProp.Value] = $true
+                $idProp.Value
+            }
+        })
+    }
+    elseif (-not $wiProp -or $null -eq $wiProp.Value) { return , ([object[]]@()) }
+    else { $ids = @($wiProp.Value | Select-Object -ExpandProperty id) }
     if ($ids.Count -eq 0) { return , ([object[]]@()) }
 
     if ($IdsOnly) { return , ([int[]]$ids) }
