@@ -76,6 +76,9 @@ function Get-AdoPipelineRuns {
 function Invoke-AdoPipelineRun {
     <#
     .SYNOPSIS  Triggers a pipeline run and returns the created run object.
+    .DESCRIPTION  ConfirmImpact is High (a run may deploy), so the default $ConfirmPreference
+                  prompts before queuing. Pass -Confirm:$false in unattended scripts/agents;
+                  use -WhatIf to simulate.
     .PARAMETER PipelineId          ID of the pipeline to trigger (mandatory).
     .PARAMETER Branch              Branch to run on (e.g. 'main', 'feature/my-branch').
     .PARAMETER Variables           Hashtable of runtime variables.
@@ -91,7 +94,7 @@ function Invoke-AdoPipelineRun {
             -Variables @{ deployEnv = @{ value = 'staging'; isSecret = $false } } `
             -Confirm:$false
     #>
-    [CmdletBinding(SupportsShouldProcess, ConfirmImpact='Medium')]
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact='High')]
     param(
         [Parameter(Mandatory)][int]$PipelineId,
         [string]$Branch = '',
