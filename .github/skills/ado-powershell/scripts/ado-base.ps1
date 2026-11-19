@@ -345,7 +345,9 @@ function Resolve-AdoConfig {
         -Pat → $env:ADO_PAT → $env:AZURE_DEVOPS_EXT_PAT → config file
 
       Config file format (JSON):
-        { "org": "", "project": "", "apiVersion": "", "pat": "", "baseUrl": "" }
+        { "org": "", "project": "", "apiVersion": "", "baseUrl": "" }
+        ('pat' is still read for backward compatibility but discouraged: use ADO_PAT and
+        keep the file outside the repo, e.g. $HOME/.config/ado/config.json.)
 
     .OUTPUTS  Hashtable with keys: Org, Project, ApiV, Pat, BaseUrl
     .EXAMPLE
@@ -367,12 +369,14 @@ function Resolve-AdoConfig {
     if ($ConfigPath -and (Test-Path $ConfigPath)) {
         try {
             $raw  = Get-Content $ConfigPath -Raw | ConvertFrom-Json
+            # Under Set-StrictMode, reading an absent key (e.g. no 'pat' in the template) throws.
+            $names = @($raw.PSObject.Properties.Name)
             $file = @{
-                Org     = if ($raw.org)        { $raw.org        } else { '' }
-                Project = if ($raw.project)    { $raw.project    } else { '' }
-                ApiV    = if ($raw.apiVersion) { $raw.apiVersion } else { '' }
-                Pat     = if ($raw.pat)        { $raw.pat        } else { '' }
-                BaseUrl = if ($raw.baseUrl)    { $raw.baseUrl    } else { '' }
+                Org     = if ($names -contains 'org'        -and $raw.org)        { $raw.org        } else { '' }
+                Project = if ($names -contains 'project'    -and $raw.project)    { $raw.project    } else { '' }
+                ApiV    = if ($names -contains 'apiVersion' -and $raw.apiVersion) { $raw.apiVersion } else { '' }
+                Pat     = if ($names -contains 'pat'        -and $raw.pat)        { $raw.pat        } else { '' }
+                BaseUrl = if ($names -contains 'baseUrl'    -and $raw.baseUrl)    { $raw.baseUrl    } else { '' }
             }
         } catch {
             Write-Warning "Resolve-AdoConfig: Could not parse config file '$ConfigPath': $_"
@@ -406,6 +410,12 @@ function Resolve-AdoConfig {
                     elseif ($file['BaseUrl'])        { $file['BaseUrl'] }
                     elseif ($resolvedOrg)            { "https://dev.azure.com/$resolvedOrg" }
                     else { '' }
+
+    # A bare host (no organization) yields broken URLs; append the org when known.
+    if ($resolvedBase) { $resolvedBase = $resolvedBase.TrimEnd('/') }
+    if ($resolvedOrg -and $resolvedBase -eq 'https://dev.azure.com') {
+        $resolvedBase = "https://dev.azure.com/$resolvedOrg"
+    }
 
     # Validate required fields
     $missing = @()
