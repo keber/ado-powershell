@@ -304,6 +304,9 @@ function New-AdoWorkItem {
     <#
     .SYNOPSIS  Creates a new Work Item of the specified type and returns the created object.
     .PARAMETER Type         Task | Bug | User Story | Feature | Epic | Issue ...
+    .PARAMETER State        Initial System.State. Not restricted client-side: valid states depend on the work item type
+                            and process template (Agile/Scrum/CMMI/custom), e.g. Test Case = Design/Ready/Closed.
+                            The server validates the value.
     .PARAMETER ExtraFields  Hashtable for any additional field, e.g.: @{'System.Tags'='qa'}
     .EXAMPLE
         New-AdoWorkItem -Type 'Task' -Title 'Configure CI/CD' -AssignedTo 'dev@contoso.com'
@@ -319,7 +322,6 @@ function New-AdoWorkItem {
         [string]$AreaPath,
         [string]$IterationPath,
         [string]$Tags,
-        [ValidateSet('New','Active','To Do','Resolved','Closed')]
         [string]$State,
         [hashtable]$ExtraFields = @{},
         [string]$Org     = $script:AdoSession.Org,
