@@ -16,8 +16,7 @@
   $AdoSession = Initialize-AdoSession -Org 'contoso' -Project 'MyApp'
 #>
 
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
+# StrictMode / ErrorActionPreference are set inside each function, not here: this file is dot-sourced and must not alter the caller session.
 
 #region -- Pipelines: Read --
 
@@ -31,6 +30,7 @@ function Get-AdoPipelines {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     return Invoke-AdoGetPaged -Uri "$(Get-AdoBaseUrl $Org)/$Project/_apis/pipelines?api-version=$ApiV" -Headers $Headers
 }
 
@@ -63,6 +63,7 @@ function Get-AdoPipelineRuns {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     # Runs - List (7.1) documents only api-version, so filters are applied client-side.
     $uri = "$(Get-AdoBaseUrl $Org)/$Project/_apis/pipelines/$PipelineId/runs?api-version=$ApiV"
     $r = Invoke-AdoGet -Uri $uri -Headers $Headers
@@ -143,6 +144,7 @@ function Invoke-AdoPipelineRun {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
     $body = @{}
     if ($Branch)                        { $body.resources   = @{ repositories = @{ self = @{ refName = "refs/heads/$($Branch -replace '^refs/heads/', '')" } } } }

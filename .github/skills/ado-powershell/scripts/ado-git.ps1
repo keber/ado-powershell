@@ -12,8 +12,7 @@
   $AdoSession = Initialize-AdoSession -Org 'contoso' -Project 'MyApp'
 #>
 
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
+# StrictMode / ErrorActionPreference are set inside each function, not here: this file is dot-sourced and must not alter the caller session.
 
 #region -- Iterations / Sprints --
 
@@ -32,6 +31,7 @@ function Get-AdoIterations {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $teamSeg = if ($Team) { "/$Team" } else { '' }
     $tfParam = if ($TimeFrame) { "&`$timeframe=$TimeFrame" } else { '' }
     $uri = "$(Get-AdoBaseUrl $Org)/$Project$teamSeg/_apis/work/teamsettings/iterations?api-version=$ApiV$tfParam"
@@ -54,6 +54,7 @@ function Get-AdoRepositories {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $r = Invoke-AdoGet -Uri "$(Get-AdoBaseUrl $Org)/$Project/_apis/git/repositories?api-version=$ApiV" -Headers $Headers
     return $r.value
 }
@@ -73,6 +74,7 @@ function Get-AdoBranches {
         [string]$ApiV    = $script:AdoSession.ApiV,
         [hashtable]$Headers = $script:AdoSession.Headers
     )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     return Invoke-AdoGetPaged -Uri "$(Get-AdoBaseUrl $Org)/$Project/_apis/git/repositories/$RepoId/refs?filter=heads/&api-version=$ApiV" -Headers $Headers
 }
 
