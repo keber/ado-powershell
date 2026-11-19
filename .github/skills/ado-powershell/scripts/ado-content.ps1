@@ -312,6 +312,10 @@ function Save-AdoInlineImage {
                 [IO.File]::WriteAllBytes($outFile, [Convert]::FromBase64String($Matches[1]))
             } else {
                 $resolved = Resolve-AdoAttachmentUrl -Url $url -Org $Org -ApiV $ApiV
+                if (-not (Test-AdoTrustedUrl -Url $resolved -Org $Org)) {
+                    Write-Warning "Image ${i}: skipped, URL is not an https Azure DevOps host (credentials are never sent to other hosts)."
+                    continue
+                }
                 Invoke-AdoDownload -Uri $resolved -OutFile $outFile -Headers $Headers
             }
 
@@ -332,6 +336,31 @@ function Save-AdoInlineImage {
 
     # Unary comma keeps a single path from unrolling to a bare [string].
     return , $written.ToArray()
+}
+
+function Test-AdoTrustedUrl {
+    <#
+    .SYNOPSIS  True only for https URLs on an Azure DevOps host: the session/org base URL host,
+               dev.azure.com, or *.visualstudio.com. Gate for sending credentials.
+    .NOTES     Internal helper for Save-AdoInlineImage. Plain http, userinfo URLs and lookalike
+               hosts (dev.azure.com.evil.example) are rejected.
+    #>
+    param(
+        [Parameter(Mandatory, Position = 0)][AllowNull()][AllowEmptyString()][string]$Url,
+        [string]$Org = $script:AdoSession.Org
+    )
+    $uri = $null
+    if (-not [uri]::TryCreate($Url, [UriKind]::Absolute, [ref]$uri)) { return $false }
+    if ($uri.Scheme -ne 'https' -or $uri.UserInfo) { return $false }
+
+    $h = $uri.Host.ToLowerInvariant()
+    if ($h -eq 'dev.azure.com' -or $h.EndsWith('.visualstudio.com')) { return $true }
+
+    $baseUri = $null
+    if ([uri]::TryCreate((Get-AdoBaseUrl $Org), [UriKind]::Absolute, [ref]$baseUri)) {
+        return ($baseUri.Scheme -eq 'https' -and $h -eq $baseUri.Host.ToLowerInvariant())
+    }
+    return $false
 }
 
 function Get-AdoImageExtension {
