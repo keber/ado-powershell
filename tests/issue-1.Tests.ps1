@@ -81,3 +81,34 @@ Describe 'C1 - Save-AdoInlineImage must not leak ADO credentials to third-party 
         Should -Invoke Invoke-AdoDownload -Times 2 -Exactly
     }
 }
+
+Describe 'C1 - Invoke-AdoDownload refuses to attach session credentials to non-ADO hosts' {
+    BeforeEach {
+        Mock Invoke-WebRequest { }
+        Mock New-AdoHeaders { $script:FakeHeaders }
+        $out = Join-Path $TestDrive 'f.bin'
+    }
+
+    It 'throws for an untrusted host when -Headers is not supplied, without calling Invoke-WebRequest' {
+        { Invoke-AdoDownload -Uri 'https://example.invalid/x.png' -OutFile $out } |
+            Should -Throw '*refusing to send Azure DevOps credentials to example.invalid*'
+        Should -Invoke Invoke-WebRequest -Times 0 -Exactly
+    }
+
+    It 'throws for plain http on the ADO host when -Headers is not supplied' {
+        { Invoke-AdoDownload -Uri 'http://dev.azure.com/contoso/x' -OutFile $out } | Should -Throw
+        Should -Invoke Invoke-WebRequest -Times 0 -Exactly
+    }
+
+    It 'calls Invoke-WebRequest with auth for a trusted host' {
+        Invoke-AdoDownload -Uri 'https://dev.azure.com/contoso/_apis/wit/attachments/a' -OutFile $out
+        Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter {
+            $Headers.ContainsKey('Authorization')
+        }
+    }
+
+    It 'keeps current behaviour when -Headers is passed explicitly (opt-in)' {
+        Invoke-AdoDownload -Uri 'https://example.invalid/x.png' -OutFile $out -Headers @{ 'X-Test' = '1' }
+        Should -Invoke Invoke-WebRequest -Times 1 -Exactly
+    }
+}

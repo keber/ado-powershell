@@ -338,31 +338,6 @@ function Save-AdoInlineImage {
     return , $written.ToArray()
 }
 
-function Test-AdoTrustedUrl {
-    <#
-    .SYNOPSIS  True only for https URLs on an Azure DevOps host: the session/org base URL host,
-               dev.azure.com, or *.visualstudio.com. Gate for sending credentials.
-    .NOTES     Internal helper for Save-AdoInlineImage. Plain http, userinfo URLs and lookalike
-               hosts (dev.azure.com.evil.example) are rejected.
-    #>
-    param(
-        [Parameter(Mandatory, Position = 0)][AllowNull()][AllowEmptyString()][string]$Url,
-        [string]$Org = $script:AdoSession.Org
-    )
-    $uri = $null
-    if (-not [uri]::TryCreate($Url, [UriKind]::Absolute, [ref]$uri)) { return $false }
-    if ($uri.Scheme -ne 'https' -or $uri.UserInfo) { return $false }
-
-    $h = $uri.Host.ToLowerInvariant()
-    if ($h -eq 'dev.azure.com' -or $h.EndsWith('.visualstudio.com')) { return $true }
-
-    $baseUri = $null
-    if ([uri]::TryCreate((Get-AdoBaseUrl $Org), [UriKind]::Absolute, [ref]$baseUri)) {
-        return ($baseUri.Scheme -eq 'https' -and $h -eq $baseUri.Host.ToLowerInvariant())
-    }
-    return $false
-}
-
 function Get-AdoImageExtension {
     <#
     .SYNOPSIS  Best-effort file extension for an image URL or data URI. Defaults to 'png'.
