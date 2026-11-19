@@ -451,3 +451,103 @@ Describe 'Issue 18 - load.ps1 auto-initialisation' {
         $AdoSession.Headers.Authorization | Should -Be 'Bearer sys-tok'
     }
 }
+
+Describe 'Issue 18 - Review follow-ups (V18-001..004)' {
+    BeforeEach {
+        Clear-AdoTestEnv
+        $env:ADO_ORG = 'myorg'; $env:ADO_PROJECT = 'P'
+        Mock Start-Sleep { }
+        Mock Write-Host { }
+    }
+    AfterEach { $script:AdoSession = $null }
+
+    It 'V18-001 Invoke-AdoRequest without -Headers uses the session headers, not env vars' {
+        $env:ADO_PAT_READ = 'read-pat'; $env:ADO_PAT = 'broad-pat'
+        $script:AdoSession = Initialize-AdoSession -Access Read
+        Mock Invoke-RestMethod { [pscustomobject]@{ id = 1 } }
+        Invoke-AdoRequest -Method GET -Uri 'https://dev.azure.com/myorg/_apis/projects' | Out-Null
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+            $Headers.Authorization -eq (ConvertTo-Basic 'read-pat') }
+    }
+
+    It 'V18-001 Invoke-AdoGetPaged without -Headers uses the session headers' {
+        $env:ADO_PAT_READ = 'read-pat'; $env:ADO_PAT = 'broad-pat'
+        $script:AdoSession = Initialize-AdoSession -Access Read
+        Mock Invoke-WebRequest { [pscustomobject]@{ Content = '{"value":[1]}'; Headers = @{} } }
+        @(Invoke-AdoGetPaged -Uri 'https://dev.azure.com/myorg/_apis/x').Count | Should -Be 1
+        Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter {
+            $Headers.Authorization -eq (ConvertTo-Basic 'read-pat') }
+    }
+
+    It 'V18-001 Invoke-AdoDownload without -Headers uses the session headers' {
+        $env:ADO_PAT_READ = 'read-pat'; $env:ADO_PAT = 'broad-pat'
+        $script:AdoSession = Initialize-AdoSession -Access Read
+        Mock Invoke-WebRequest { [pscustomobject]@{ Headers = @{ 'Content-Type' = 'image/png' } } }
+        Invoke-AdoDownload -Uri 'https://dev.azure.com/myorg/_apis/wit/attachments/1' -OutFile (Join-Path $TestDrive 'f.png')
+        Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter {
+            $Headers.Authorization -eq (ConvertTo-Basic 'read-pat') }
+    }
+
+    It 'V18-001 without a session the env-var headers are still used (backward compatibility)' {
+        $env:ADO_PAT = 'legacy-pat'
+        $script:AdoSession = $null
+        Mock Invoke-RestMethod { [pscustomobject]@{ id = 1 } }
+        Invoke-AdoRequest -Method GET -Uri 'https://dev.azure.com/myorg/_apis/projects' | Out-Null
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+            $Headers.Authorization -eq (ConvertTo-Basic 'legacy-pat') }
+    }
+
+    It 'V18-002 a malformed config file is reported by path without echoing its content' {
+        $p = Join-Path $TestDrive 'bad.json'
+        Set-Content -LiteralPath $p -Value '{ "org": "o", "pat": "FILE-SECRET-PAT" '
+        $env:ADO_PAT = 'legacy-pat'
+        # Resolve-AdoConfig is not an advanced function: capture the warning stream by redirection.
+        $w = @(Resolve-AdoConfig -ConfigPath $p 3>&1 | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
+        $w.Count | Should -Be 1
+        "$w" | Should -Match ([regex]::Escape($p))
+        "$w" | Should -Not -Match 'FILE-SECRET-PAT'
+    }
+
+    It 'V18-003 a whitespace-only -Token is treated as absent (scheme matches header)' {
+        $env:ADO_PAT = 'legacy-pat'
+        $s = Initialize-AdoSession -Token '   '
+        $s.AuthScheme            | Should -Be 'Basic'
+        $s.Headers.Authorization | Should -Be (ConvertTo-Basic 'legacy-pat')
+    }
+
+    It 'V18-003 a whitespace-only -Pat with -Token is not reported as ambiguous' {
+        $s = Initialize-AdoSession -Pat ' ' -Token 'tok'
+        $s.AuthScheme            | Should -Be 'Bearer'
+        $s.Headers.Authorization | Should -Be 'Bearer tok'
+    }
+
+    It 'V18-003 whitespace-only env PAT is skipped in favour of the next source' {
+        $env:ADO_PAT_READ = '  '; $env:ADO_PAT = 'legacy-pat'
+        $s = Initialize-AdoSession -Access Read
+        $s.Headers.Authorization | Should -Be (ConvertTo-Basic 'legacy-pat')
+    }
+
+    It 'V18-004 Invoke-AdoDownload maps VS403463 to AdoConditionalAccess' {
+        Mock Invoke-WebRequest {
+            throw (New-HttpError -Status 401 -Headers @{ 'X-TFS-ServiceError' = $script:CaMessage })
+        }
+        $err = $null
+        try {
+            Invoke-AdoDownload -Uri 'https://dev.azure.com/myorg/_apis/wit/attachments/1' `
+                -OutFile (Join-Path $TestDrive 'g.png') -Headers @{ Authorization = 'Basic eA==' }
+        } catch { $err = $_ }
+        $err.FullyQualifiedErrorId | Should -Match 'AdoConditionalAccess'
+    }
+
+    It 'V18-004 the attachment upload maps VS403463 to AdoConditionalAccess' {
+        $script:AdoSession = New-FakeSession -Access 'Write'
+        Mock Invoke-RestMethod {
+            throw (New-HttpError -Status 401 -Headers @{ 'X-TFS-ServiceError' = $script:CaMessage })
+        }
+        $f = Join-Path $TestDrive 'up.txt'; Set-Content -LiteralPath $f -Value 'x'
+        $err = $null
+        try { Add-AdoWorkItemAttachment -Id 1 -FilePath $f -Confirm:$false } catch { $err = $_ }
+        $err.FullyQualifiedErrorId | Should -Match 'AdoConditionalAccess'
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly
+    }
+}

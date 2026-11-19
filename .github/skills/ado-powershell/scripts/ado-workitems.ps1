@@ -714,8 +714,14 @@ function Add-AdoWorkItemAttachment {
     # 1. Upload the binary
     $uploadHdr = $Headers.Clone()
     $uploadHdr['Content-Type'] = 'application/octet-stream'
-    $attachment = Invoke-RestMethod -Method POST -Uri $uploadUri `
-        -Headers $uploadHdr -Body ([IO.File]::ReadAllBytes($full)) -ErrorAction Stop
+    try {
+        $attachment = Invoke-RestMethod -Method POST -Uri $uploadUri `
+            -Headers $uploadHdr -Body ([IO.File]::ReadAllBytes($full)) -ErrorAction Stop
+    } catch {
+        # Same Conditional Access (VS403463) diagnostics as Invoke-AdoRequest.
+        if (Test-AdoConditionalAccessError -ErrorRecord $_) { throw (New-AdoConditionalAccessError -Uri $uploadUri) }
+        throw
+    }
 
     # 2. Attach the reference to the Work Item
     $ops = @(@{

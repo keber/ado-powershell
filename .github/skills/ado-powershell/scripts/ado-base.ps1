@@ -69,6 +69,30 @@ function New-AdoHeaders {
     return @{ Authorization = "Basic $b64" }
 }
 
+function Get-AdoDefaultHeaders {
+    <#
+    .SYNOPSIS
+      Headers used when a caller passes no -Headers: the current session's, else New-AdoHeaders.
+    .DESCRIPTION
+      Internal helper for Invoke-AdoRequest, Invoke-AdoGetPaged and Invoke-AdoDownload. Using the
+      session's headers keeps a Read session on the credential it was initialised with (for
+      example ADO_PAT_READ) instead of re-resolving ADO_PAT from the environment. Without a session
+      (or a session without Headers) the legacy environment resolution applies unchanged.
+    .OUTPUTS  Hashtable
+    #>
+    param()
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    $session = $null
+    try { $session = $script:AdoSession } catch { $session = $null }
+    if ($null -ne $session) {
+        $hp = $session.PSObject.Properties['Headers']
+        if ($hp -and $hp.Value -is [System.Collections.IDictionary] -and $hp.Value.Count -gt 0) {
+            return $hp.Value
+        }
+    }
+    return New-AdoHeaders
+}
+
 function Assert-AdoWriteAccess {
     <#
     .SYNOPSIS
@@ -332,7 +356,7 @@ function Invoke-AdoRequest {
     .PARAMETER Uri          Full endpoint URL.
     .PARAMETER Body         Request body (UTF-8 string).
     .PARAMETER ContentType  Content-Type of the body. Default: application/json.
-    .PARAMETER Headers      Hashtable of headers. Default: New-AdoHeaders.
+    .PARAMETER Headers      Hashtable of headers. Default: the session's headers, else New-AdoHeaders.
     .PARAMETER MaxRetries   Maximum number of attempts (default: 3).
     .PARAMETER RetryDelaySec Base seconds for backoff (default: 2).
     .PARAMETER RetryNonIdempotent
@@ -374,7 +398,7 @@ function Invoke-AdoRequest {
         Assert-AdoWriteAccess -Operation "$Method $Uri"
     }
 
-    if (-not $Headers) { $Headers = New-AdoHeaders }
+    if (-not $Headers) { $Headers = Get-AdoDefaultHeaders }
 
     $canRetryTransient = $RetryNonIdempotent -or ($Method -in 'GET', 'PUT', 'DELETE')
 
@@ -557,7 +581,7 @@ function Invoke-AdoGetPaged {
       exponentially (429 honours Retry-After, capped at 120s); other errors back off linearly. A sign-in page is thrown as ErrorId AdoSignInPage and is not retried.
 
     .PARAMETER Uri            First-page URL (including api-version). Must not carry continuationToken.
-    .PARAMETER Headers        Auth headers. Default: New-AdoHeaders.
+    .PARAMETER Headers        Auth headers. Default: the session's headers, else New-AdoHeaders.
     .PARAMETER ItemsProperty  Response property holding the items (default: value).
     .PARAMETER MaxItems       Stop after this many items (0 = no limit).
     .OUTPUTS  The collected items across all pages.
@@ -572,7 +596,7 @@ function Invoke-AdoGetPaged {
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
-    if (-not $Headers) { $Headers = New-AdoHeaders }
+    if (-not $Headers) { $Headers = Get-AdoDefaultHeaders }
 
     $items = [System.Collections.Generic.List[object]]::new()
     $token = $null
@@ -721,7 +745,8 @@ function Invoke-AdoDownload {
       Downloads a resource from an authenticated ADO URL directly to a local file.
     .PARAMETER Uri      Full URL to download (including api-version if required).
     .PARAMETER OutFile  Local path where the file will be saved.
-    .PARAMETER Headers  Auth headers (hashtable). Defaults to New-AdoHeaders, but then the URL
+    .PARAMETER Headers  Auth headers (hashtable). Defaults to the session's headers (New-AdoHeaders
+                        when there is no session), but then the URL
                         must be an https Azure DevOps host (Test-AdoTrustedUrl); otherwise it
                         throws. Passing -Headers explicitly is an opt-in and skips that check.
     #>
@@ -737,11 +762,16 @@ function Invoke-AdoDownload {
             try { $h = ([uri]$Uri).Host } catch { $h = $Uri }
             throw "Invoke-AdoDownload: refusing to send Azure DevOps credentials to $h (not an https Azure DevOps host). Pass -Headers explicitly to override."
         }
-        $Headers = New-AdoHeaders
+        $Headers = Get-AdoDefaultHeaders
     }
     # -PassThru keeps the response object alongside -OutFile (5.1 and 7), so the Content-Type
     # can be inspected: ADO answers a bad/expired PAT with its HTML sign-in page and HTTP 200.
-    $response = Invoke-WebRequest -Uri $Uri -Headers $Headers -OutFile $OutFile -PassThru -ErrorAction Stop
+    try {
+        $response = Invoke-WebRequest -Uri $Uri -Headers $Headers -OutFile $OutFile -PassThru -ErrorAction Stop
+    } catch {
+        if (Test-AdoConditionalAccessError -ErrorRecord $_) { throw (New-AdoConditionalAccessError -Uri $Uri) }
+        throw
+    }
     $contentType = $null
     if ($null -ne $response -and $null -ne $response.Headers) {
         $contentType = [string]($response.Headers['Content-Type'] | Select-Object -First 1)
@@ -822,8 +852,16 @@ function Resolve-AdoConfig {
     $suffix    = $Access.ToUpperInvariant()
     $patVar    = "ADO_PAT_$suffix"
     $projVar   = "ADO_PROJECT_$suffix"
-    $accessPat = [Environment]::GetEnvironmentVariable($patVar)
-    $accessPrj = [Environment]::GetEnvironmentVariable($projVar)
+    # Whitespace-only values count as absent everywhere, so the AuthScheme reported always matches
+    # the header New-AdoHeaders builds (it ignores blank -Pat / -Token too).
+    $blankToEmpty = { param($v) if ([string]::IsNullOrWhiteSpace([string]$v)) { '' } else { [string]$v } }
+    $Pat       = & $blankToEmpty $Pat
+    $Token     = & $blankToEmpty $Token
+    $accessPat = & $blankToEmpty ([Environment]::GetEnvironmentVariable($patVar))
+    $accessPrj = & $blankToEmpty ([Environment]::GetEnvironmentVariable($projVar))
+    $envPat    = & $blankToEmpty $env:ADO_PAT
+    $envExtPat = & $blankToEmpty $env:AZURE_DEVOPS_EXT_PAT
+    $envSysTok = & $blankToEmpty $env:SYSTEM_ACCESSTOKEN
 
     if ([int][bool]$Pat + [int][bool]$Token + [int][bool]$Bearer -gt 1) {
         throw 'Resolve-AdoConfig: pass only one of -Pat, -Token or -Bearer.'
@@ -844,7 +882,10 @@ function Resolve-AdoConfig {
                 BaseUrl = if ($names -contains 'baseUrl'    -and $raw.baseUrl)    { $raw.baseUrl    } else { '' }
             }
         } catch {
-            Write-Warning "Resolve-AdoConfig: Could not parse config file '$ConfigPath': $_"
+            # Path and error type only: the parser message quotes the file content, which may
+            # include a legacy 'pat'.
+            Write-Warning ("Resolve-AdoConfig: Could not parse config file '$ConfigPath' " +
+                           "($($_.Exception.GetType().Name)); it is ignored.")
         }
     }
 
@@ -870,15 +911,16 @@ function Resolve-AdoConfig {
     $resolvedPat   = ''
     $resolvedToken = ''
     if ($Token)      { $resolvedToken = $Token }
-    elseif ($Bearer) { $resolvedToken = [string]$env:SYSTEM_ACCESSTOKEN }
+    elseif ($Bearer) { $resolvedToken = $envSysTok }
     else {
-        $resolvedPat = if ($Pat)                          { $Pat }
-                       elseif ($accessPat)                { $accessPat }
-                       elseif ($env:ADO_PAT)              { $env:ADO_PAT }
-                       elseif ($env:AZURE_DEVOPS_EXT_PAT) { $env:AZURE_DEVOPS_EXT_PAT }
-                       elseif ($file['Pat'])              { $file['Pat'] }
+        $filePat     = & $blankToEmpty $file['Pat']
+        $resolvedPat = if ($Pat)           { $Pat }
+                       elseif ($accessPat) { $accessPat }
+                       elseif ($envPat)    { $envPat }
+                       elseif ($envExtPat) { $envExtPat }
+                       elseif ($filePat)   { $filePat }
                        else { '' }
-        if (-not $resolvedPat -and $env:SYSTEM_ACCESSTOKEN) { $resolvedToken = $env:SYSTEM_ACCESSTOKEN }
+        if (-not $resolvedPat -and $envSysTok) { $resolvedToken = $envSysTok }
     }
     $authScheme = if ($resolvedToken) { 'Bearer' } else { 'Basic' }
 
