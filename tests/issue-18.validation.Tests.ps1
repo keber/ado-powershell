@@ -462,7 +462,7 @@ Describe 'V18 Bearer and credential exclusivity' {
         { Initialize-AdoSession -Bearer } | Should -Throw '*SYSTEM_ACCESSTOKEN*'
     }
 
-    It 'Bearer header is what goes on the wire (local listener, real 5.1 stack)' {
+    It 'Bearer header is what goes on the wire (local listener, real 5.1 stack)' -Tag Integration {
         $srv = Start-LocalHttp -Status 200 -Body '{"ok":1}'
         try {
             $null = Invoke-AdoRequest -Method GET -Uri "$($srv.Base)/x" -Headers (New-AdoHeaders -Token 'wire-tok')
@@ -475,7 +475,7 @@ Describe 'V18 VS403463 detection' {
     BeforeAll { Mock Start-Sleep { }; $script:AdoSession = New-ValSession -Access 'Write' }
     AfterAll  { $script:AdoSession = $null }
 
-    It 'Invoke-AdoRequest, real 5.1 WebException, <Where>: AdoConditionalAccess, not retried' -ForEach @(
+    It 'Invoke-AdoRequest, real 5.1 WebException, <Where>: AdoConditionalAccess, not retried' -Tag Integration -ForEach @(
         @{ Where = 'header only (401)'; Status = 401; H = @{ 'X-TFS-ServiceError' = $CaHeader }; B = '' }
         @{ Where = 'body only (401)';   Status = 401; H = @{}; B = $CaBody }
         @{ Where = 'header (403)';      Status = 403; H = @{ 'X-TFS-ServiceError' = $CaHeader }; B = $CaBody }
@@ -492,7 +492,7 @@ Describe 'V18 VS403463 detection' {
         } finally { Stop-LocalHttp $srv }
     }
 
-    It 'Invoke-AdoRequest POST (-RetryNonIdempotent -ReadOnly) with VS403463 is not retried' {
+    It 'Invoke-AdoRequest POST (-RetryNonIdempotent -ReadOnly) with VS403463 is not retried' -Tag Integration {
         $srv = Start-LocalHttp -Status 401 -ExtraHeaders @{ 'X-TFS-ServiceError' = $script:CaHeader }
         try {
             { Invoke-AdoRequest -Method POST -Uri "$($srv.Base)/wiql" -Body '{}' -Headers @{ Authorization = 'x' } -RetryNonIdempotent -ReadOnly -RetryDelaySec 0 } |
@@ -501,7 +501,7 @@ Describe 'V18 VS403463 detection' {
         } finally { Stop-LocalHttp $srv }
     }
 
-    It 'Invoke-AdoGetPaged, real 5.1 WebException, <Where>: AdoConditionalAccess, not retried' -ForEach @(
+    It 'Invoke-AdoGetPaged, real 5.1 WebException, <Where>: AdoConditionalAccess, not retried' -Tag Integration -ForEach @(
         @{ Where = 'header (401)'; Status = 401; H = @{ 'X-TFS-ServiceError' = $CaHeader }; B = '' }
         @{ Where = 'body (401)';   Status = 401; H = @{}; B = $CaBody }
         @{ Where = 'header (503)'; Status = 503; H = @{ 'X-TFS-ServiceError' = $CaHeader }; B = '' }
@@ -523,7 +523,7 @@ Describe 'V18 VS403463 detection' {
         Test-AdoConditionalAccessError -ErrorRecord $er | Should -BeTrue
     }
 
-    It 'a plain 401 without VS403463 is not reported as Conditional Access' {
+    It 'a plain 401 without VS403463 is not reported as Conditional Access' -Tag Integration {
         $srv = Start-LocalHttp -Status 401 -Body '{"message":"TF400813: not authorized"}'
         try {
             $err = $null
@@ -533,7 +533,7 @@ Describe 'V18 VS403463 detection' {
         } finally { Stop-LocalHttp $srv }
     }
 
-    It 'Invoke-AdoDownload reports VS403463 as Conditional Access (beyond the issue scope)' {
+    It 'Invoke-AdoDownload reports VS403463 as Conditional Access (beyond the issue scope)' -Tag Integration {
         $srv = Start-LocalHttp -Status 401 -ExtraHeaders @{ 'X-TFS-ServiceError' = $script:CaHeader }
         try {
             $err = $null
@@ -559,7 +559,7 @@ Describe 'V18 secret hygiene (all streams)' {
         ($s | Format-List * | Out-String) | Should -Not -Match ([regex]::Escape($b64))
     }
 
-    It 'HTTP <S> errors, retries and warnings never contain the credential (Verbose/Debug/Warning captured)' -ForEach @(
+    It 'HTTP <S> errors, retries and warnings never contain the credential (Verbose/Debug/Warning captured)' -Tag Integration -ForEach @(
         @{ S = 401 }, @{ S = 403 }, @{ S = 404 }, @{ S = 500 }, @{ S = 503 }
     ) {
         $srv = Start-LocalHttp -Status $S -Body '{"message":"nope"}'
