@@ -214,6 +214,12 @@ Describe 'Issue 38 - pull requests: core lifecycle' {
     }
 
     It 'Complete-AdoPullRequest fetches lastMergeSourceCommit when not given' {
+        Mock Invoke-RestMethod {
+            $r = Invoke-FakeAdo $Method $Uri $Body
+            if ("$Method" -eq 'PATCH') { $r = [pscustomobject]@{ pullRequestId = 42; status = 'completed' } }
+            $r
+        }
+        Mock Write-Warning { }
         (Get-Command Complete-AdoPullRequest).ScriptBlock.Attributes |
             Where-Object { $_ -is [System.Management.Automation.CmdletBindingAttribute] } |
             ForEach-Object { $_.ConfirmImpact } | Should -Be 'High'
@@ -227,9 +233,17 @@ Describe 'Issue 38 - pull requests: core lifecycle' {
         $b.completionOptions.deleteSourceBranch    | Should -BeTrue
         $b.completionOptions.transitionWorkItems   | Should -BeTrue
         $b.completionOptions.mergeCommitMessage    | Should -Be 'msg'
+        Should -Invoke Write-Warning -Times 0
+        Should -Invoke Write-Host -ParameterFilter { "$Object" -match '\(ok\).*completed' } -Times 1
     }
 
     It 'Complete-AdoPullRequest uses an explicit commit id without fetching' {
+        Mock Invoke-RestMethod {
+            $r = Invoke-FakeAdo $Method $Uri $Body
+            if ("$Method" -eq 'PATCH') { $r = [pscustomobject]@{ pullRequestId = 42; status = 'completed' } }
+            $r
+        }
+        Mock Write-Warning { }
         Complete-AdoPullRequest -RepoId 'MyRepo' -PullRequestId 42 -LastMergeSourceCommitId 'def456' -Confirm:$false | Out-Null
         (Get-Call GET).Count | Should -Be 0
         $b = (Get-Call PATCH)[0].Body | ConvertFrom-Json
@@ -237,6 +251,8 @@ Describe 'Issue 38 - pull requests: core lifecycle' {
         $b.completionOptions.mergeStrategy       | Should -Be 'noFastForward'
         $b.completionOptions.deleteSourceBranch  | Should -BeFalse
         $b.completionOptions.transitionWorkItems | Should -BeFalse
+        Should -Invoke Write-Warning -Times 0
+        Should -Invoke Write-Host -ParameterFilter { "$Object" -match '\(ok\).*completed' } -Times 1
     }
 
     It 'Complete-AdoPullRequest rejects an undocumented merge strategy' {
