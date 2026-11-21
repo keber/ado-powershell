@@ -269,7 +269,9 @@ Describe 'Dot segments, empty segments and query values (V41-002/003/004)' {
     It 'V41-003 Get-AdoIterations -TimeFrame accepts <Value>' -TestCases @(@{ Value = 'past' }, @{ Value = 'current' }, @{ Value = 'future' }) {
         param($Value)
         Get-AdoIterations -TimeFrame $Value | Out-Null
-        $script:Calls[0].Uri | Should -BeLike "*&`$timeframe=$Value"
+        # Issue #48: the service only accepts $timeframe=current; past/future are filtered client-side.
+        if ($Value -eq 'current') { $script:Calls[0].Uri | Should -BeLike "*&`$timeframe=current" }
+        else { $script:Calls[0].Uri | Should -Not -BeLike '*timeframe*' }
     }
 
     It 'V41-003 Get-AdoIterations -TimeFrame rejects a value outside past/current/future' {
