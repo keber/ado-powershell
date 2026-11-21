@@ -38,9 +38,13 @@ function Get-AdoPipelineRuns {
     <#
     .SYNOPSIS  Returns recent runs of a pipeline with optional filters.
     .DESCRIPTION
-        The Pipelines Runs - List API (7.1) supports no filter parameters, so all
-        filters are applied client-side on the runs it returns. Results are ordered
-        most recent first (by createdDate) before -Top is applied.
+        The Pipelines Runs - List API (7.1) supports no filter parameters, and its items
+        carry no 'resources' (so no branch), so State/Result/date filters are applied
+        client-side on the runs it returns. -Branch is resolved server-side with the Build
+        API (Builds - List, definitions={PipelineId}&branchName=...; a YAML pipeline id equals
+        its build definition id) and intersected with the run list by run id. Output is always
+        the Pipelines API run object. -Branch therefore needs Build (read) scope in addition
+        to Pipelines. Results are ordered most recent first (by createdDate) before -Top.
     .PARAMETER Top          Maximum number of runs to return after filtering.
     .PARAMETER Branch       Filter by branch name (e.g. 'main' or 'refs/heads/feature/x').
     .PARAMETER State        Filter by run state: notStarted | inProgress | completed.
@@ -64,10 +68,22 @@ function Get-AdoPipelineRuns {
         [hashtable]$Headers = $script:AdoSession.Headers
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
-    # Runs - List (7.1) documents only api-version, so filters are applied client-side.
+    # Runs - List (7.1) documents only api-version, so State/Result/date filters are applied client-side.
     $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/pipelines/$PipelineId/runs?api-version=$ApiV"
     $r = Invoke-AdoGet -Uri $uri -Headers $Headers
     $runs = @(if ($r.PSObject.Properties['value']) { $r.value })
+
+    # Branch is not available on Runs - List items: ask the Build API which builds (== runs,
+    # same id) belong to the branch. No $top is sent so -Top applies after all other filters.
+    $branchIds = $null
+    if ($Branch) {
+        $full = if ($Branch -like 'refs/*') { $Branch } else { "refs/heads/$Branch" }
+        $bUri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/build/builds" +
+                "?definitions=$PipelineId&branchName=$([uri]::EscapeDataString($full))&api-version=$ApiV"
+        $b = Invoke-AdoGet -Uri $bUri -Headers $Headers
+        $branchIds = @{}
+        if ($b.PSObject.Properties['value']) { foreach ($x in @($b.value)) { $branchIds["$($x.id)"] = $true } }
+    }
 
     # StrictMode-safe property read: returns $null when a property is missing.
     $prop = { param($o, $n) if ($null -ne $o -and $o.PSObject.Properties[$n]) { $o.$n } else { $null } }
@@ -80,20 +96,14 @@ function Get-AdoPipelineRuns {
                 [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$d)) { return $d.UtcDateTime }
         throw "Invalid date value: '$v'"
     }
-    $normRef = { param($v) ("$v") -replace '^refs/heads/', '' }
 
     $fromDate = & $toDate $CreatedFrom
     $toDateV  = & $toDate $CreatedTo
-    $branchN  = if ($Branch) { & $normRef $Branch } else { $null }
 
     $filtered = foreach ($run in $runs) {
         if ($State  -and (& $prop $run 'state')  -ine $State)  { continue }
         if ($Result -and (& $prop $run 'result') -ine $Result) { continue }
-        if ($branchN) {
-            $self = & $prop (& $prop (& $prop $run 'resources') 'repositories') 'self'
-            $ref  = & $prop $self 'refName'
-            if ($null -eq $ref -or (& $normRef $ref) -ne $branchN) { continue }
-        }
+        if ($null -ne $branchIds -and -not $branchIds.ContainsKey("$(& $prop $run 'id')")) { continue }
         $created = & $toDate (& $prop $run 'createdDate')
         if ($fromDate -or $toDateV) {
             if ($null -eq $created) { continue }
