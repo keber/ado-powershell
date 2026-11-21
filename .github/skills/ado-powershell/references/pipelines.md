@@ -29,7 +29,7 @@ Returns recent runs of a pipeline with optional filters.
 |-----------|----------|---------|-------|
 | `-PipelineId` | ✅ | - | - |
 | `-Top` | | `10` | Max results |
-| `-Branch` | | - | e.g. `'main'` or `'refs/heads/feature/x'` |
+| `-Branch` | | - | e.g. `'main'` or `'refs/heads/feature/x'`. Resolved via the Build API (see note below) |
 | `-State` | | - | `notStarted \| inProgress \| completed` |
 | `-Result` | | - | `succeeded \| failed \| canceled \| partiallySucceeded` |
 | `-CreatedFrom` | | - | ISO-8601 lower bound, e.g. `'2025-01-01'` |
@@ -45,6 +45,14 @@ Get-AdoPipelineRuns -PipelineId 12 -Top 5 -Branch 'main' |
 Get-AdoPipelineRuns -PipelineId 12 -Top 20 -Result 'failed' -CreatedFrom '2025-01-01' |
     Select-Object id, name, result | Format-Table -AutoSize
 ```
+
+> **`-Branch` note:** Runs - List items carry no branch information, so `-Branch` makes an
+> extra call to the Build API (`_apis/build/builds?definitions={PipelineId}&branchName=refs/heads/...`;
+> a YAML pipeline id equals its build definition id) and keeps only the runs whose id appears
+> there. The lookup follows continuation tokens (all pages) and is bounded to the runs window
+> (`minTime` = oldest run's `createdDate` minus 1 day, `queryOrder=queueTimeDescending`); it is
+> skipped when the pipeline has no runs. The returned objects are still Pipelines API run objects
+> (same shape with or without `-Branch`). This requires Build (read) permission in addition to Pipelines.
 
 ---
 
