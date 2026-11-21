@@ -9,6 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0-rc.4] - 2026-11-21
+
+Fourth release candidate: fixes from live testing of 1.6.0-rc.3 (#45-#53). Published under the npm
+`next` dist-tag. Validated with mocked Pester tests on Windows PowerShell 5.1 only; not exercised
+against a real Azure DevOps organization or on PowerShell 7.
+
+### Added
+
+- Every HTTP call now has a finite timeout. `Initialize-AdoSession -TimeoutSec` (default 100 s,
+  env `ADO_TIMEOUT_SEC`) applies to API requests and `-TransferTimeoutSec` (default 300 s, env
+  `ADO_TRANSFER_TIMEOUT_SEC`) to downloads and attachment uploads. `Invoke-AdoRequest`,
+  `Invoke-AdoGet`, `Invoke-AdoGetPaged` and `Invoke-AdoDownload` accept a per-call `-TimeoutSec`.
+  A timeout is retried for GET/PUT/DELETE only (POST/PATCH need `-RetryNonIdempotent`). (#47)
+
+### Changed
+
+- `Invoke-AdoWiql`, `Get-AdoWorkItemsBatch`, `Get-AdoInlineImageUrl` and `Save-AdoInlineImage`
+  emit their results to the pipeline one by one instead of returning a single nested array, so
+  `@(...)`, `Measure-Object`, `Select-Object` and `-Ids @(Invoke-AdoWiql ... -IdsOnly)` work. An
+  empty result emits nothing: wrap the call in `@(...)` when you need `.Count`. (#49)
+- HTTP 401 and 403 are thrown with stable ErrorIds `AdoUnauthorized` (`AuthenticationError`) and
+  `AdoForbidden` (`PermissionDenied`) by `Invoke-AdoRequest`, `Invoke-AdoGetPaged` and
+  `Invoke-AdoDownload`; messages are unchanged and never contain the credential. (#50)
+- `New-AdoWorkItem -State` (and `New-AdoTestCase -State`) no longer sends `System.State` on create;
+  when the requested state differs from the one the server assigned, a follow-up update sets it (two
+  revisions). If that update fails, ErrorId `AdoWorkItemStateUpdateFailed` names the created id;
+  the work item is not rolled back. (#53)
+
+### Fixed
+
+- `Complete-AdoPullRequest` no longer reports success when Azure DevOps answers 200 but does not
+  complete the PR. `mergeStatus = conflicts` throws `AdoPullRequestConflict`;
+  `rejectedByPolicy` / `failure` or an abandoned PR throws `AdoPullRequestNotCompleted`; a PR still
+  active (completion queued) is returned with a warning. (#51)
+- `Invoke-AdoDownload` passes `-UseBasicParsing`, so `Save-AdoInlineImage` works on Windows
+  PowerShell 5.1 without the Internet Explorer engine. (#46)
+- `New-AdoTestCase` HTML-encodes step and expected-result text before XML-escaping it, so text such
+  as `Saved <ok>` or `List<string>` is no longer dropped by Azure DevOps. (#52)
+- `Get-AdoPipelineRuns -Branch` returned no runs because Runs - List items carry no branch. The
+  branch is now resolved with the Build API (paged, bounded to the runs window) and intersected by
+  run id; the output is still the Pipelines run object. `-Branch` needs Build (read) permission. (#45)
+- `Get-AdoIterations -TimeFrame past|future` failed with 400: only `current` is sent to the
+  server; `past` / `future` are filtered client-side on `attributes.timeFrame`. (#48)
+
 ## [1.6.0-rc.3] - 2026-11-19
 
 Third release candidate: URL path segments (project, team, repository, work item type, label,
