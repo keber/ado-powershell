@@ -14,7 +14,7 @@ Lists team iterations (sprints) with their paths, dates, and time-frame status.
 | Parameter | Required | Default | Notes |
 |-----------|----------|---------|-------|
 | `-Team` | | project default team | Team name or ID |
-| `-TimeFrame` | | all | `current \| past \| future` |
+| `-TimeFrame` | | all | `current \| past \| future`. The service only accepts `$timeframe=current`; `past` and `future` fetch all iterations and filter client-side on `attributes.timeFrame` (returns an empty result if none match) |
 
 ```powershell
 # Current sprint of the default team

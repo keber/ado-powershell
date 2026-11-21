@@ -19,7 +19,9 @@
 function Get-AdoIterations {
     <#
     .SYNOPSIS  Lists team iterations (sprints).
-    .PARAMETER TimeFrame  current | past | future  (empty = all)
+    .PARAMETER TimeFrame  current | past | future  (empty = all). The service only accepts
+                          $timeframe=current, so past/future are filtered client-side on
+                          attributes.timeFrame.
     .PARAMETER Team       Team name or ID. If omitted, uses the project default team.
     .EXAMPLE   Get-AdoIterations -TimeFrame current
     #>
@@ -34,9 +36,16 @@ function Get-AdoIterations {
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $teamSeg = if ($Team) { "/$(ConvertTo-AdoPathSegment -Value $Team -Name 'team')" } else { '' }
-    $tfParam = if ($TimeFrame) { "&`$timeframe=$([Uri]::EscapeDataString($TimeFrame))" } else { '' }
+    # The service rejects $timeframe=past|future with 400; only 'current' is a valid server-side filter.
+    $tfParam = if ($TimeFrame -eq 'current') { "&`$timeframe=current" } else { '' }
     $uri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)$teamSeg/_apis/work/teamsettings/iterations?api-version=$ApiV$tfParam"
     $r   = Invoke-AdoGet -Uri $uri -Headers $Headers
+    if ($TimeFrame -in 'past', 'future') {
+        return @($r.value | Where-Object {
+            $_.PSObject.Properties['attributes'] -and $_.attributes -and
+            $_.attributes.PSObject.Properties['timeFrame'] -and $_.attributes.timeFrame -eq $TimeFrame
+        })
+    }
     return $r.value
 }
 
