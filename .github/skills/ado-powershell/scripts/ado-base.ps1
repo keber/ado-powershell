@@ -342,6 +342,28 @@ function New-AdoConditionalAccessError {
         [System.Management.Automation.ErrorCategory]::PermissionDenied, $Uri)
 }
 
+function New-AdoAuthStatusError {
+    <#
+    .SYNOPSIS  Builds the ErrorRecord thrown for HTTP 401 (AdoUnauthorized) and 403 (AdoForbidden).
+    .NOTES     Internal helper shared by Invoke-AdoRequest, Invoke-AdoGetPaged and Invoke-AdoDownload.
+               401 -> AuthenticationError, 403 -> PermissionDenied, so callers can branch on
+               FullyQualifiedErrorId. The message contains the request URI only, never credentials.
+    #>
+    param(
+        [Parameter(Mandatory)][ValidateSet(401, 403)][int]$Status,
+        [Parameter(Mandatory)][string]$Uri
+    )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    if ($Status -eq 401) {
+        return [System.Management.Automation.ErrorRecord]::new(
+            [System.UnauthorizedAccessException]::new('401 Unauthorized - check ADO_PAT.'), 'AdoUnauthorized',
+            [System.Management.Automation.ErrorCategory]::AuthenticationError, $Uri)
+    }
+    return [System.Management.Automation.ErrorRecord]::new(
+        [System.UnauthorizedAccessException]::new("403 Forbidden - PAT does not have sufficient permissions for: $Uri"),
+        'AdoForbidden', [System.Management.Automation.ErrorCategory]::PermissionDenied, $Uri)
+}
+
 #endregion
 
 #region -- HTTP core with retries --
@@ -496,12 +518,7 @@ function Invoke-AdoRequest {
 
             # 401 / 403: do not retry -- PAT is invalid or permissions are missing
             if ($status -in 401, 403) {
-                $msg = if ($status -eq 401) {
-                    "401 Unauthorized - check ADO_PAT."
-                } else {
-                    "403 Forbidden - PAT does not have sufficient permissions for: $Uri"
-                }
-                throw $msg
+                throw (New-AdoAuthStatusError -Status $status -Uri $Uri)
             }
 
             # 400: bad request - do not retry, include response body for diagnosis
@@ -682,8 +699,7 @@ function Invoke-AdoGetPaged {
                 if (Test-AdoConditionalAccessError -ErrorRecord $_) {
                     throw (New-AdoConditionalAccessError -Uri $pageUri)
                 }
-                if ($status -eq 401) { throw "401 Unauthorized - check ADO_PAT." }
-                if ($status -eq 403) { throw "403 Forbidden - PAT does not have sufficient permissions for: $pageUri" }
+                if ($status -in 401, 403) { throw (New-AdoAuthStatusError -Status $status -Uri $pageUri) }
                 if ($status -eq 400) {
                     $body400 = ''
                     # PS 5.1 and 7 populate ErrorDetails.Message; GetResponseStream is 5.1 only.
@@ -833,6 +849,9 @@ function Invoke-AdoDownload {
             -TimeoutSec (Get-AdoTimeoutSec -Transfer -Override $TimeoutSec) -ErrorAction Stop
     } catch {
         if (Test-AdoConditionalAccessError -ErrorRecord $_) { throw (New-AdoConditionalAccessError -Uri $Uri) }
+        $status = $null
+        try { $status = [int]$_.Exception.Response.StatusCode } catch { }
+        if ($status -in 401, 403) { throw (New-AdoAuthStatusError -Status $status -Uri $Uri) }
         throw
     }
     $contentType = $null
