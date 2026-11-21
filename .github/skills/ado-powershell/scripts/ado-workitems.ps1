@@ -139,9 +139,9 @@ function Get-AdoWorkItemsBatch {
         $Expand = 'None'
     }
 
-    # Unary comma on every return path: 'return @()' unrolls to $null, and a caller doing
-    # .Count on the result would break under StrictMode.
-    if ($Ids.Count -eq 0) { return , ([object[]]@()) }
+    # Items go to the pipeline one by one and an empty result is no output; a caller that needs
+    # an array (e.g. for .Count under StrictMode) wraps the call in @(...).
+    if ($Ids.Count -eq 0) { return }
 
     $uri     = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/wit/workitemsbatch?api-version=$ApiV"
     $results = New-Object System.Collections.Generic.List[object]
@@ -182,7 +182,7 @@ function Get-AdoWorkItemsBatch {
         }
     }
 
-    return , $results.ToArray()
+    return $results.ToArray()
 }
 
 function Get-AdoWorkItemComments {
@@ -303,7 +303,7 @@ function Invoke-AdoWiql {
         Invoke-AdoWiql -Query $q -Top 1000 -Fields 'System.Id','System.Title','System.State'
     .EXAMPLE
         # Just the ids - one request instead of one per 200 items
-        $ids = Invoke-AdoWiql -Query $q -Top 5000 -IdsOnly
+        $ids = @(Invoke-AdoWiql -Query $q -Top 5000 -IdsOnly)
     #>
     param(
         [Parameter(Mandatory)][string]$Query,
@@ -345,17 +345,17 @@ function Invoke-AdoWiql {
             }
         })
     }
-    elseif (-not $wiProp -or $null -eq $wiProp.Value) { return , ([object[]]@()) }
+    elseif (-not $wiProp -or $null -eq $wiProp.Value) { return }
     else {
         $ids      = @($wiProp.Value | Select-Object -ExpandProperty id)
         $rowCount = $ids.Count
     }
-    if ($ids.Count -eq 0) { return , ([object[]]@()) }
+    if ($ids.Count -eq 0) { return }
     if ($rowCount -eq $Top) {
         Write-Warning "WIQL returned exactly -Top ($Top) rows; the result is likely truncated. Narrow the query or raise -Top (max 20000)."
     }
 
-    if ($IdsOnly) { return , ([int[]]$ids) }
+    if ($IdsOnly) { return [int[]]$ids }
 
     $batchArgs = @{
         Ids = $ids; Org = $Org; Project = $Project; ApiV = $ApiV; Headers = $Headers

@@ -47,8 +47,9 @@ $html = Get-AdoWorkItemContentHtml -WorkItem $wi
 Get-AdoInlineImageUrl -Html $html
 ```
 
-Returns `[string[]]` always - zero and one match included, so `.Count` is safe without wrapping the
-call in `@()`.
+Emits one string per URL to the pipeline (nothing for zero matches), so `Measure-Object`,
+`Select-Object` and `foreach` work. Use `@(Get-AdoInlineImageUrl ...)` when you need an array or
+`.Count` (a single match is a bare string, zero matches is `$null` otherwise).
 
 URLs are HTML-decoded. An attribute written as `...?fileName=a&amp;download=true` comes back with a
 real `&`; passing the raw attribute to a download requests the wrong resource.
@@ -88,7 +89,7 @@ Downloads the images embedded in a Work Item's content to a local directory. Sup
 
 ```powershell
 $wi    = Get-AdoWorkItem -Id 20071
-$files = Save-AdoInlineImage -WorkItem $wi -OutDirectory ./cache/20071
+$files = @(Save-AdoInlineImage -WorkItem $wi -OutDirectory ./cache/20071)
 # then look at each file - the mockup is often the only place that says whether the item
 # describes a new screen or a section added to one that already exists
 ```
@@ -98,7 +99,8 @@ data URI (`png` when nothing says otherwise). Both attachment URLs and base64 `d
 handled. A download that fails or produces zero bytes is discarded rather than left behind as a
 truncated file, and a warning names which image it was.
 
-Returns `[string[]]` of the paths written - always an array.
+Emits the paths written to the pipeline, one string each (nothing when no file was written). Wrap
+the call in `@(...)` for an array or `.Count`.
 
 ---
 
