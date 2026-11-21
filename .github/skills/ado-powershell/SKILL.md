@@ -191,7 +191,7 @@ Full docs: [references/base.md](references/base.md)
 | `Get-AdoFieldValue -WorkItem <wi> -Name <f>` | Read a field without throwing under `Set-StrictMode`. **Use this instead of `$wi.fields.'X'`** - ADO omits unset fields, and dot notation on a missing one throws. Accepts `-Default`. |
 | `Read-AdoJsonUtf8 -Path <p>` | Read a local JSON file as UTF-8. **Use this instead of `Get-Content`** for anything written back to ADO - PS 5.1 decodes with the ANSI codepage and turns accents into mojibake. |
 | `Test-AdoSignInResponse -Response <r>` | Is this an ADO sign-in page rather than a payload? Called automatically by `Invoke-AdoRequest`. |
-| `Initialize-AdoSession [-Access Read\|Write] [-Token <t> \| -Bearer]` | Build `$AdoSession`. `Read` refuses writes; `-Token` / `-Bearer` send `Authorization: Bearer`. |
+| `Initialize-AdoSession [-Access Read\|Write] [-Token <t> \| -Bearer]` | Build `$AdoSession`. `Read` refuses writes; `-Token` / `-Bearer` send `Authorization: Bearer`. `-TimeoutSec` (default 100 s, `ADO_TIMEOUT_SEC`) and `-TransferTimeoutSec` (300 s, `ADO_TRANSFER_TIMEOUT_SEC`) cap every HTTP call. |
 | `New-AdoHeaders [-Pat <p> \| -Token <t> \| -Bearer]` | Build the `Authorization` header (Basic for a PAT, Bearer for a token). |
 | `Assert-AdoWriteAccess` | Throw `AdoReadOnlySession` on a Read session. Called automatically by `Invoke-AdoRequest` for non-GET requests not marked `-ReadOnly`. |
 
