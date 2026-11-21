@@ -372,8 +372,14 @@ function New-AdoWorkItem {
     <#
     .SYNOPSIS  Creates a new Work Item of the specified type and returns the created object.
     .PARAMETER Type         Task | Bug | User Story | Feature | Epic | Issue ...
-    .PARAMETER State        Initial System.State. Not restricted client-side: valid states depend on the work item type
+    .PARAMETER State        Desired System.State. Not restricted client-side: valid states depend on the work item type
                             and process template (Agile/Scrum/CMMI/custom), e.g. Test Case = Design/Ready/Closed.
+                            Azure DevOps only accepts the initial state on creation, so the item is created without
+                            System.State; when the state the server assigned differs from -State, a second PATCH
+                            (Update-AdoWorkItem) sets it (two revisions). With no -State, or when -State already is
+                            the initial state, exactly one request is made. If the update fails after the create
+                            succeeded, the error (ErrorId AdoWorkItemStateUpdateFailed) names the created id and
+                            carries the created item in TargetObject; the work item is NOT rolled back.
                             The server validates the value.
     .PARAMETER ExtraFields  Hashtable for any additional field, e.g.: @{'System.Tags'='qa'}
     .EXAMPLE
@@ -406,7 +412,6 @@ function New-AdoWorkItem {
     if ($AreaPath)      { $ops.Add(@{ op='add'; path='/fields/System.AreaPath';      value=$AreaPath      }) }
     if ($IterationPath) { $ops.Add(@{ op='add'; path='/fields/System.IterationPath'; value=$IterationPath }) }
     if ($Tags)          { $ops.Add(@{ op='add'; path='/fields/System.Tags';          value=$Tags          }) }
-    if ($State)         { $ops.Add(@{ op='add'; path='/fields/System.State';         value=$State         }) }
     foreach ($k in $ExtraFields.Keys) {
         $ops.Add(@{ op='add'; path="/fields/$k"; value=$ExtraFields[$k] })
     }
@@ -418,7 +423,32 @@ function New-AdoWorkItem {
     $r = Invoke-AdoRequest -Method POST -Uri $uri -Body (ConvertTo-Json -InputObject @($ops) -Depth 5) `
         -ContentType 'application/json-patch+json' -Headers $Headers
     Write-Host "(ok) Work Item created - ID: $($r.id)" -ForegroundColor Green
-    return $r
+
+    if (-not $State) { return $r }
+
+    # ADO only accepts the initial state on creation (issue #53), so System.State is never sent on the
+    # POST. Skip the second request when the server already assigned the requested state.
+    $createdState = $null
+    $fieldsProp = $r.PSObject.Properties['fields']
+    if ($fieldsProp -and $fieldsProp.Value) {
+        $stateProp = $fieldsProp.Value.PSObject.Properties['System.State']
+        if ($stateProp) { $createdState = [string]$stateProp.Value }
+    }
+    if ($createdState -eq $State) { return $r }
+
+    try {
+        # The create was already confirmed; do not prompt a second time for the same logical operation.
+        return Update-AdoWorkItem -Id ([int]$r.id) -State $State -Org $Org -Project $Project -ApiV $ApiV `
+            -Headers $Headers -Confirm:$false
+    }
+    catch {
+        $msg = ("Work Item #$($r.id) was created (state '$createdState') but setting System.State to '$State' failed: " +
+                "$($_.Exception.Message) The work item was NOT rolled back; retry with " +
+                "Update-AdoWorkItem -Id $($r.id) -State '$State'.")
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.InvalidOperationException]::new($msg, $_.Exception), 'AdoWorkItemStateUpdateFailed',
+            [System.Management.Automation.ErrorCategory]::InvalidResult, $r)
+    }
 }
 
 #endregion
