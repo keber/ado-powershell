@@ -467,6 +467,8 @@ function New-AdoTestCase {
                             All steps are ActionStep except the last, which becomes a ValidateStep.
     .PARAMETER ExpectedResult Plain-text expected result applied to the last step (ValidateStep).
                               Ignored when Steps is empty.
+    .PARAMETER State        Design | Ready | Closed. ADO only accepts the initial state on creation, so a different
+                            state is applied with a second PATCH after the create (two revisions); see New-AdoWorkItem.
     .PARAMETER Priority     1 (Critical) | 2 (High) | 3 (Medium) | 4 (Low).
     .PARAMETER ExtraFields  Hashtable of additional TCM or custom fields.
 

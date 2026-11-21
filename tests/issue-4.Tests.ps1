@@ -46,10 +46,13 @@ Describe 'H2 - New-AdoTestCase -State' {
         { New-AdoTestCase -Title 'TC' -State $State -Confirm:$false } | Should -Not -Throw
     }
 
-    It 'New-AdoTestCase -State Design sends System.State=Design in the create request' {
+    It 'New-AdoTestCase -State Design never sends System.State in the create request (issue #53) and applies it via PATCH when the created state is unknown' {
         New-AdoTestCase -Title 'TC' -State 'Design' -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
-        Should -Invoke Invoke-AdoRequest -Times 1 -ParameterFilter {
-            $Method -eq 'POST' -and $Body -match '/fields/System\.State"' -and $Body -match '"value":\s*"Design"'
+        Should -Invoke Invoke-AdoRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'POST' -and $Body -notmatch 'System\.State'
+        }
+        Should -Invoke Invoke-AdoRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'PATCH' -and $Body -match '/fields/System\.State"' -and $Body -match '"value":\s*"Design"'
         }
     }
 

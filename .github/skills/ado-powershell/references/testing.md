@@ -162,7 +162,7 @@ Creates a Test Case work item with optional steps encoded in the ADO XML format.
 | `-AssignedTo` | | - | Email or display name |
 | `-Description` | | - | HTML accepted |
 | `-Tags` | | - | Semicolon-separated |
-| `-State` | | - | `Design \| Ready \| Closed` |
+| `-State` | | - | `Design \| Ready \| Closed`. ADO only accepts the initial state on creation: the test case is created, then a second PATCH sets the state when it differs (two revisions). If that update fails the error names the created id (`AdoWorkItemStateUpdateFailed`); the item is not rolled back |
 | `-AreaPath` | | - | - |
 | `-IterationPath` | | - | - |
 | `-ExtraFields` | | `@{}` | Any additional TCM or custom field |

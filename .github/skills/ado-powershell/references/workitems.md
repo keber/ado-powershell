@@ -248,7 +248,7 @@ Creates a new Work Item of the given type.
 | `-AreaPath` | | Defaults to project root |
 | `-IterationPath` | | e.g. `'MyProject\Sprint 5'` |
 | `-Tags` | | Semicolon-separated: `'tag1; tag2'` |
-| `-State` | | `New \| Active \| To Do \| Resolved \| Closed` |
+| `-State` | | `New \| Active \| To Do \| Resolved \| Closed`. Valid values depend on the type/process. ADO only accepts the initial state on creation, so the item is created without `System.State` and a second PATCH sets it when it differs from the assigned state (two revisions; no extra call when equal). If that update fails, the error (`AdoWorkItemStateUpdateFailed`) names the created id and the item is not rolled back: retry with `Update-AdoWorkItem -Id <id> -State <state>` |
 | `-ExtraFields` | | `@{ 'System.Tags' = 'qa'; 'Microsoft.VSTS.Common.Priority' = '1' }` |
 
 ```powershell
