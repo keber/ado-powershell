@@ -14,6 +14,7 @@
 | `429 Too Many Requests` | ADO rate limit (API quota) | Exponential backoff up to `$MaxRetries` |
 | `503 Service Unavailable` | ADO temporarily unavailable | Exponential backoff up to `$MaxRetries` |
 | Other 5xx | Transient server error | Linear backoff up to `$MaxRetries` |
+| (no status) timeout | No response within `TimeoutSec` (default 100 s; see base.md "HTTP timeouts") | `GET`/`PUT`/`DELETE`: linear backoff up to `$MaxRetries`; `POST`/`PATCH`: **no retry**, the timeout exception is thrown (the write may have been committed) |
 
 > **Note:** Retries for 429/503 use `$RetryDelaySec * 2^attempt` seconds.  
 > With default values (MaxRetries=3, RetryDelaySec=2): 4 s → 8 s → fail.

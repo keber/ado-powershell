@@ -26,6 +26,8 @@ variables by name only, never by value.
 | `-Access` | `Read` or `Write` (default `Write` = previous behaviour). Selects `ADO_PAT_<ACCESS>` / `ADO_PROJECT_<ACCESS>` first |
 | `-Token` | OAuth / Microsoft Entra access token, sent as `Bearer` |
 | `-Bearer` | Use `SYSTEM_ACCESSTOKEN` as `Bearer` even when a PAT variable is set |
+| `-TimeoutSec` | Timeout in seconds for each API request (default `100`; env `ADO_TIMEOUT_SEC`) |
+| `-TransferTimeoutSec` | Timeout in seconds for downloads and attachment uploads (default `300`; env `ADO_TRANSFER_TIMEOUT_SEC`) |
 | `-Pat`, `-Org`, `-Project`, `-ApiV`, `-BaseUrl`, `-ConfigPath` | Unchanged |
 
 Only one of `-Pat`, `-Token`, `-Bearer` may be passed. Resolution order:
@@ -35,7 +37,8 @@ Only one of `-Pat`, `-Token`, `-Bearer` may be passed. Resolution order:
   `AZURE_DEVOPS_EXT_PAT` → config-file `pat` → `SYSTEM_ACCESSTOKEN`
 
 The session object carries `Org`, `Project`, `ApiV`, `BaseUrl`, `Access`, `AuthScheme`
-(`Basic` | `Bearer`) and `Headers`. The raw PAT / token is not stored as a property.
+(`Basic` | `Bearer`), `Headers`, `TimeoutSec` and `TransferTimeoutSec`. The raw PAT / token is not
+stored as a property.
 
 ```powershell
 # Reader process: read-only PAT, writes refused client-side
@@ -84,6 +87,26 @@ session keeps using `ADO_PAT_READ` and never falls back to a broader `ADO_PAT`. 
 is no session do they resolve `New-AdoHeaders` from the environment.
 
 Whitespace-only `-Pat`, `-Token` and credential variables are treated as absent everywhere.
+
+### HTTP timeouts
+
+Every HTTP call passes `-TimeoutSec`, so a stalled connection fails instead of blocking the
+session. `Invoke-AdoRequest`, `Invoke-AdoGet` and `Invoke-AdoGetPaged` (per page) use the
+session's `TimeoutSec` (100 s); `Invoke-AdoDownload` and the upload in
+`Add-AdoWorkItemAttachment` use `TransferTimeoutSec` (300 s). Each of those functions except the
+attachment upload also takes `-TimeoutSec` to override the value for one call. Resolution:
+per-call `-TimeoutSec` → session value (`Initialize-AdoSession` parameter → environment variable
+→ default). `0` (infinite) is not accepted; an invalid environment value makes
+`Initialize-AdoSession` throw, naming the variable. Without a session the environment variables
+and defaults still apply (`Get-AdoTimeoutSec`).
+
+Retry policy (no new ErrorId; a timeout is an ordinary transient error without a status code):
+
+- `GET` / `PUT` / `DELETE` (and `Invoke-AdoGetPaged` pages): retried with linear backoff up to
+  `-MaxRetries`; the timeout applies to each attempt.
+- `POST` / `PATCH`: **not retried** (the timed-out write may have been committed server-side);
+  the original timeout exception is thrown. `-RetryNonIdempotent` opts in for read-only POSTs.
+- `Invoke-AdoDownload` and the attachment upload have no retry loop: the timeout is thrown as is.
 
 ### `New-AdoHeaders`
 
