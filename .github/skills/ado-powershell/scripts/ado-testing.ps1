@@ -455,6 +455,19 @@ function Remove-AdoTestCaseFromSuite {
     return $r
 }
 
+function ConvertTo-AdoTestStepText {
+    <#
+    .SYNOPSIS
+      Encodes plain text for a <parameterizedString isformatted="true"> element of Microsoft.VSTS.TCM.Steps.
+      The element is XML, but its decoded content is parsed as HTML by Azure DevOps, so the text is
+      HTML-encoded first (keeps '<', '>' and '&' literal) and XML-escaped second.
+    #>
+    [CmdletBinding()]
+    param([AllowEmptyString()][AllowNull()][string]$Text)
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    return [System.Security.SecurityElement]::Escape([System.Net.WebUtility]::HtmlEncode($Text))
+}
+
 function New-AdoTestCase {
     <#
     .SYNOPSIS
@@ -508,11 +521,11 @@ function New-AdoTestCase {
         $stepsXml   = '<steps id="0" last="{0}">' -f $Steps.Count
         $stepIndex  = 1
         foreach ($action in $Steps) {
-            $escaped  = [System.Security.SecurityElement]::Escape($action)
+            $escaped  = ConvertTo-AdoTestStepText -Text $action
             $isLastStep = ($stepIndex -eq $Steps.Count)
             $stepType   = if ($isLastStep) { 'ValidateStep' } else { 'ActionStep' }
             $expected   = if ($isLastStep -and $ExpectedResult) {
-                [System.Security.SecurityElement]::Escape($ExpectedResult)
+                ConvertTo-AdoTestStepText -Text $ExpectedResult
             } else { '' }
             $stepsXml += '<step id="{0}" type="{1}"><parameterizedString isformatted="true">{2}</parameterizedString><parameterizedString isformatted="true">{3}</parameterizedString><description/></step>' -f $stepIndex, $stepType, $escaped, $expected
             $stepIndex++
