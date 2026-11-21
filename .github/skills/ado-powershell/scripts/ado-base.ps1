@@ -346,6 +346,41 @@ function New-AdoConditionalAccessError {
 
 #region -- HTTP core with retries --
 
+function Get-AdoTimeoutSec {
+    <#
+    .SYNOPSIS
+      Seconds to pass as -TimeoutSec to every web cmdlet call (never 0 = infinite).
+    .DESCRIPTION
+      Internal helper used by every HTTP call in the skill. Order: -Override (> 0) -> the session's
+      TimeoutSec (TransferTimeoutSec with -Transfer) -> ADO_TIMEOUT_SEC (ADO_TRANSFER_TIMEOUT_SEC)
+      -> 100 s (300 s for transfers). A missing, hand-built or invalid value falls back to the next
+      source, so a request always has a finite timeout.
+    .PARAMETER Transfer  Use the (longer) file transfer timeout: downloads and attachment uploads.
+    .PARAMETER Override  Per-call value; 0 or omitted means "use the session / default".
+    .OUTPUTS  [int]
+    #>
+    param(
+        [switch]$Transfer,
+        [int]$Override = 0
+    )
+    Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+    if ($Override -gt 0) { return $Override }
+
+    $propName = if ($Transfer) { 'TransferTimeoutSec' } else { 'TimeoutSec' }
+    $envName  = if ($Transfer) { 'ADO_TRANSFER_TIMEOUT_SEC' } else { 'ADO_TIMEOUT_SEC' }
+
+    $session = $null
+    try { $session = $script:AdoSession } catch { $session = $null }
+    if ($null -ne $session) {
+        $p = $session.PSObject.Properties[$propName]
+        $v = 0
+        if ($p -and $null -ne $p.Value -and [int]::TryParse([string]$p.Value, [ref]$v) -and $v -gt 0) { return $v }
+    }
+    $e = 0
+    if ([int]::TryParse([string][Environment]::GetEnvironmentVariable($envName), [ref]$e) -and $e -gt 0) { return $e }
+    return $(if ($Transfer) { 300 } else { 100 })
+}
+
 function Invoke-AdoRequest {
     <#
     .SYNOPSIS
@@ -367,10 +402,16 @@ function Invoke-AdoRequest {
       Declares that a non-GET request does not modify data (WIQL, workitemsbatch), so it is
       allowed on a session initialised with -Access Read. Every other POST/PATCH/PUT/DELETE is
       refused on a Read session (ErrorId AdoReadOnlySession) before anything is sent.
+    .PARAMETER TimeoutSec
+      Per-attempt timeout in seconds. Default: the session's TimeoutSec (100 s unless changed with
+      Initialize-AdoSession -TimeoutSec / ADO_TIMEOUT_SEC).
 
     .NOTES
       GET/PUT/DELETE retry on 429, 503 and other transient errors. POST/PATCH retry only on
       429 (rejected before processing); any other error is thrown immediately, unretried.
+      A timeout is an ordinary transient error with no status code: it is retried for
+      GET/PUT/DELETE (and POST/PATCH with -RetryNonIdempotent) and thrown unretried otherwise,
+      because a timed-out write may already have been committed.
       A 429 Retry-After header (seconds) is honoured when present.
       A 409 Conflict is never retried, for any method; the original error is rethrown.
       A Conditional Access rejection (VS403463) is thrown as ErrorId AdoConditionalAccess and
@@ -390,7 +431,8 @@ function Invoke-AdoRequest {
         [int]$MaxRetries     = 3,
         [int]$RetryDelaySec  = 2,
         [switch]$RetryNonIdempotent,
-        [switch]$ReadOnly
+        [switch]$ReadOnly,
+        [int]$TimeoutSec     = 0
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
@@ -400,6 +442,7 @@ function Invoke-AdoRequest {
     }
 
     if (-not $Headers) { $Headers = Get-AdoDefaultHeaders }
+    $timeout = Get-AdoTimeoutSec -Override $TimeoutSec
 
     $canRetryTransient = $RetryNonIdempotent -or ($Method -in 'GET', 'PUT', 'DELETE')
 
@@ -413,6 +456,7 @@ function Invoke-AdoRequest {
                 Method      = $Method
                 Uri         = $Uri
                 Headers     = $Headers
+                TimeoutSec  = $timeout
                 ErrorAction = 'Stop'
             }
             if ($Body) {
@@ -538,11 +582,12 @@ function Invoke-AdoGet {
         [Parameter(Mandatory)][string]$Uri,
         [hashtable]$Headers,
         [int]$MaxRetries    = 3,
-        [int]$RetryDelaySec = 2
+        [int]$RetryDelaySec = 2,
+        [int]$TimeoutSec    = 0
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     Invoke-AdoRequest -Method GET -Uri $Uri -Headers $Headers `
-        -MaxRetries $MaxRetries -RetryDelaySec $RetryDelaySec
+        -MaxRetries $MaxRetries -RetryDelaySec $RetryDelaySec -TimeoutSec $TimeoutSec
 }
 
 function Test-AdoTrustedUrl {
@@ -592,6 +637,8 @@ function Invoke-AdoGetPaged {
     .PARAMETER Headers        Auth headers. Default: the session's headers, else New-AdoHeaders.
     .PARAMETER ItemsProperty  Response property holding the items (default: value).
     .PARAMETER MaxItems       Stop after this many items (0 = no limit).
+    .PARAMETER TimeoutSec     Per-page timeout in seconds. Default: the session's TimeoutSec (100 s).
+                              A timed-out page is retried like any transient GET error.
     .OUTPUTS  The collected items across all pages.
     #>
     param(
@@ -600,11 +647,13 @@ function Invoke-AdoGetPaged {
         [string]$ItemsProperty = 'value',
         [int]$MaxItems         = 0,
         [int]$MaxRetries       = 3,
-        [int]$RetryDelaySec    = 2
+        [int]$RetryDelaySec    = 2,
+        [int]$TimeoutSec       = 0
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 
     if (-not $Headers) { $Headers = Get-AdoDefaultHeaders }
+    $timeout = Get-AdoTimeoutSec -Override $TimeoutSec
 
     $items = [System.Collections.Generic.List[object]]::new()
     $token = $null
@@ -623,7 +672,7 @@ function Invoke-AdoGetPaged {
             $attempt++
             try {
                 $response = Invoke-WebRequest -Method GET -Uri $pageUri -Headers $Headers `
-                    -UseBasicParsing -ErrorAction Stop
+                    -UseBasicParsing -TimeoutSec $timeout -ErrorAction Stop
             }
             catch {
                 $lastErr = $_
@@ -759,11 +808,14 @@ function Invoke-AdoDownload {
                         when there is no session), but then the URL
                         must be an https Azure DevOps host (Test-AdoTrustedUrl); otherwise it
                         throws. Passing -Headers explicitly is an opt-in and skips that check.
+    .PARAMETER TimeoutSec  Timeout in seconds for the whole transfer. Default: the session's
+                        TransferTimeoutSec (300 s). Never retried: a timeout is thrown as is.
     #>
     param(
         [Parameter(Mandatory)][string]$Uri,
         [Parameter(Mandatory)][string]$OutFile,
-        [hashtable]$Headers
+        [hashtable]$Headers,
+        [int]$TimeoutSec = 0
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     if (-not $Headers) {
@@ -777,7 +829,8 @@ function Invoke-AdoDownload {
     # -PassThru keeps the response object alongside -OutFile (5.1 and 7), so the Content-Type
     # can be inspected: ADO answers a bad/expired PAT with its HTML sign-in page and HTTP 200.
     try {
-        $response = Invoke-WebRequest -Uri $Uri -Headers $Headers -OutFile $OutFile -PassThru -UseBasicParsing -ErrorAction Stop
+        $response = Invoke-WebRequest -Uri $Uri -Headers $Headers -OutFile $OutFile -PassThru -UseBasicParsing `
+            -TimeoutSec (Get-AdoTimeoutSec -Transfer -Override $TimeoutSec) -ErrorAction Stop
     } catch {
         if (Test-AdoConditionalAccessError -ErrorRecord $_) { throw (New-AdoConditionalAccessError -Uri $Uri) }
         throw
@@ -998,9 +1051,13 @@ function Initialize-AdoSession {
     .PARAMETER Access  Read or Write (default Write).
     .PARAMETER Token   OAuth / Microsoft Entra access token, sent as Bearer.
     .PARAMETER Bearer  Use $env:SYSTEM_ACCESSTOKEN (Azure Pipelines) even when a PAT variable is set.
+    .PARAMETER TimeoutSec          Timeout in seconds for each API request (default 100; env ADO_TIMEOUT_SEC).
+    .PARAMETER TransferTimeoutSec  Timeout in seconds for downloads and attachment uploads (default 300;
+                                   env ADO_TRANSFER_TIMEOUT_SEC). 0 (infinite) is not accepted.
 
     .OUTPUTS
-      PSCustomObject (Org, Project, ApiV, BaseUrl, Access, AuthScheme, Headers) used by
+      PSCustomObject (Org, Project, ApiV, BaseUrl, Access, AuthScheme, Headers, TimeoutSec,
+      TransferTimeoutSec) used by
       ado-workitems, ado-testing, ado-pipelines, and ado-git functions as session defaults.
       The raw PAT / token is not stored on the object (only inside Headers).
 
@@ -1031,9 +1088,28 @@ function Initialize-AdoSession {
         [ValidateSet('Read', 'Write')]
         [string]$Access     = 'Write',
         [string]$Token      = '',
-        [switch]$Bearer
+        [switch]$Bearer,
+        [ValidateRange(1, 86400)]
+        [int]$TimeoutSec         = 0,
+        [ValidateRange(1, 86400)]
+        [int]$TransferTimeoutSec = 0
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+
+    # Parameter > environment variable > default. Invalid environment values fail loudly (by name).
+    $resolveTimeout = {
+        param([int]$Explicit, [string]$EnvName, [int]$Default)
+        if ($Explicit -gt 0) { return $Explicit }
+        $raw = [Environment]::GetEnvironmentVariable($EnvName)
+        if ([string]::IsNullOrWhiteSpace($raw)) { return $Default }
+        $n = 0
+        if (-not [int]::TryParse($raw.Trim(), [ref]$n) -or $n -lt 1 -or $n -gt 86400) {
+            throw "Initialize-AdoSession: $EnvName must be a whole number of seconds between 1 and 86400."
+        }
+        return $n
+    }
+    $timeoutSec         = & $resolveTimeout $TimeoutSec 'ADO_TIMEOUT_SEC' 100
+    $transferTimeoutSec = & $resolveTimeout $TransferTimeoutSec 'ADO_TRANSFER_TIMEOUT_SEC' 300
 
     $resolved = Resolve-AdoConfig `
         -Org        $Org `
@@ -1057,6 +1133,8 @@ function Initialize-AdoSession {
         Access     = $resolved.Access
         AuthScheme = $resolved.AuthScheme
         Headers    = $headers
+        TimeoutSec          = $timeoutSec
+        TransferTimeoutSec  = $transferTimeoutSec
     }
 
     # Export as script variable so domain files can find it

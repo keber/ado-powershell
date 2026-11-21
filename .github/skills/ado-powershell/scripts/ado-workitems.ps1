@@ -718,7 +718,8 @@ function Add-AdoWorkItemAttachment {
     $uploadHdr['Content-Type'] = 'application/octet-stream'
     try {
         $attachment = Invoke-RestMethod -Method POST -Uri $uploadUri `
-            -Headers $uploadHdr -Body ([IO.File]::ReadAllBytes($full)) -ErrorAction Stop
+            -Headers $uploadHdr -Body ([IO.File]::ReadAllBytes($full)) `
+            -TimeoutSec (Get-AdoTimeoutSec -Transfer) -ErrorAction Stop
     } catch {
         # Same Conditional Access (VS403463) diagnostics as Invoke-AdoRequest.
         if (Test-AdoConditionalAccessError -ErrorRecord $_) { throw (New-AdoConditionalAccessError -Uri $uploadUri) }
