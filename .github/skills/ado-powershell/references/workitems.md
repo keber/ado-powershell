@@ -48,7 +48,7 @@ concatenated.
 
 | Parameter | Required | Default | Notes |
 |-----------|----------|---------|-------|
-| `-Ids` | ✅ | - | `[int[]]` array, any length. Empty returns an empty array without calling ADO |
+| `-Ids` | ✅ | - | `[int[]]` array, any length. Empty emits nothing without calling ADO |
 | `-Fields` | | all fields | `@('System.Title','System.State',...)` to limit payload. Forces `-Expand None` |
 | `-Expand` | | `All` | Same values as `Get-AdoWorkItem`. Cannot be combined with `-Fields` |
 | `-BatchSize` | | `200` | Ids per request, 1-200. Lower it only for a constrained gateway |
@@ -60,7 +60,7 @@ Get-AdoWorkItemsBatch -Ids @(100, 101, 102) |
     Format-Table -AutoSize
 
 # 750 ids -> four requests, one result set
-$items = Get-AdoWorkItemsBatch -Ids $manyIds
+$items = @(Get-AdoWorkItemsBatch -Ids $manyIds)
 
 # Only the fields needed, which also avoids the -Expand All payload
 Get-AdoWorkItemsBatch -Ids @(100,101) -Fields 'System.Id','System.Title','System.State'
@@ -69,6 +69,11 @@ Get-AdoWorkItemsBatch -Ids @(100,101) -Fields 'System.Id','System.Title','System
 > **`-Fields` and `-Expand` are mutually exclusive.** ADO answers HTTP 400 when `fields` arrives
 > with an `$expand` other than `None`, so `-Fields` sets `-Expand None`. Passing both explicitly
 > raises an error rather than silently overriding your choice.
+
+> **Pipeline output.** Items are emitted one by one (no items, no output), so `Select-Object`,
+> `Measure-Object` and `ForEach-Object` work directly. Wrap the call in `@(...)` when you need an
+> array or a safe `.Count`: `$items = @(Get-AdoWorkItemsBatch ...)`. Code written against the old
+> single-nested-array output (`$r[0]` meaning "all items") must be updated.
 
 > Results are in ADO's order within each batch, which is not guaranteed to match the order of
 > `-Ids`. Match on `id` rather than on position.
@@ -95,8 +100,14 @@ so a `-Top` above 200 is fine.
 Invoke-AdoWiql -Query $q -Top 1000 -Fields 'System.Id','System.Title','System.State'
 
 # Just the ids: one request instead of one per 200 items
-$ids = Invoke-AdoWiql -Query $q -Top 5000 -IdsOnly
+$ids = @(Invoke-AdoWiql -Query $q -Top 5000 -IdsOnly)
+
+# Chain into a batch fetch
+Get-AdoWorkItemsBatch -Ids @(Invoke-AdoWiql -Query $q -IdsOnly) -Fields 'System.Title'
 ```
+
+Like `Get-AdoWorkItemsBatch`, the output is emitted to the pipeline element by element: no match, no
+output. Use `@(...)` for an array or `.Count`.
 
 ```powershell
 # Active items in current sprint

@@ -80,16 +80,16 @@ function Get-AdoInlineImageUrl {
     .PARAMETER AttachmentOnly  Return only ADO attachment URLs, skipping data: URIs.
 
     .OUTPUTS
-      [string[]] - always an array, including for zero or one match. PowerShell unrolls a
-      pipeline on return, so the result is built into a typed collection and returned with a
-      unary comma; a caller can rely on .Count without wrapping the call in @().
+      [string] - one URL per pipeline object, in document order; no output for zero matches.
+      Wrap the call in @(...) when an array is needed (for .Count under StrictMode, say); the
+      result also pipes cleanly into Measure-Object, Select-Object and foreach.
 
     .EXAMPLE
       $wi   = Get-AdoWorkItem -Id 20071
       $html = Get-AdoFieldValue -WorkItem $wi -Name 'System.Description'
       Get-AdoInlineImageUrl -Html $html
     #>
-    [OutputType([string[]])]
+    [OutputType([string])]
     param(
         [Parameter(Position = 0, ValueFromPipeline)]
         [AllowNull()]
@@ -100,7 +100,7 @@ function Get-AdoInlineImageUrl {
     )
     Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
     $out = New-Object System.Collections.Generic.List[string]
-    if ([string]::IsNullOrWhiteSpace($Html)) { return , $out.ToArray() }
+    if ([string]::IsNullOrWhiteSpace($Html)) { return }
 
     $rx = [regex]'(?is)<img[^>]+?src\s*=\s*["'']([^"''>]+)["'']'
     foreach ($m in $rx.Matches($Html)) {
@@ -108,8 +108,8 @@ function Get-AdoInlineImageUrl {
         if ($AttachmentOnly -and $url -like 'data:*') { continue }
         $out.Add($url)
     }
-    # Unary comma: without it a single element returns as [string] and none as $null.
-    return , $out.ToArray()
+    # Emitted one by one; a caller that needs an array wraps the call in @(...).
+    return $out.ToArray()
 }
 
 function Get-AdoWorkItemContentHtml {
@@ -227,7 +227,8 @@ function Save-AdoInlineImage {
                             Also download AttachedFile relations whose name looks like an image.
                             Requires -WorkItem fetched with relations (the default -Expand All).
 
-    .OUTPUTS  [string[]] paths of the files written, in document order. Always an array.
+    .OUTPUTS  [string] paths of the files written, in document order, one per pipeline object.
+              Wrap the call in @(...) for an array; nothing is emitted when no file was written.
 
     .EXAMPLE
       $wi = Get-AdoWorkItem -Id 20071
@@ -286,12 +287,12 @@ function Save-AdoInlineImage {
         }
     }
 
-    foreach ($u in (Get-AdoInlineImageUrl -Html $sourceHtml)) { $urls.Add($u) }
+    foreach ($u in @(Get-AdoInlineImageUrl -Html $sourceHtml)) { $urls.Add($u) }
 
-    if ($urls.Count -eq 0) { return , ([string[]]@()) }
+    if ($urls.Count -eq 0) { return }
 
     if (-not (Test-Path -LiteralPath $OutDirectory)) {
-        if (-not $PSCmdlet.ShouldProcess($OutDirectory, 'Create directory')) { return , ([string[]]@()) }
+        if (-not $PSCmdlet.ShouldProcess($OutDirectory, 'Create directory')) { return }
         $null = New-Item -ItemType Directory -Path $OutDirectory -Force
     }
 
@@ -349,8 +350,8 @@ function Save-AdoInlineImage {
         }
     }
 
-    # Unary comma keeps a single path from unrolling to a bare [string].
-    return , $written.ToArray()
+    # Paths are emitted one by one; a caller that needs an array wraps the call in @(...).
+    return $written.ToArray()
 }
 
 function Test-AdoImageSignature {
