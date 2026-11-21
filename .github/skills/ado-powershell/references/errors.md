@@ -5,15 +5,20 @@
 | Code | Common cause | `Invoke-AdoRequest` behavior |
 |------|--------------|------------------------------|
 | `200-299` | Success | Returns parsed response as object |
-| `401 Unauthorized` | Invalid, expired or malformed PAT | Immediate error - **no retry** |
+| `401 Unauthorized` | Invalid, expired or malformed PAT | ErrorId `AdoUnauthorized` (category `AuthenticationError`) - **no retry** |
 | `401` / `403` with `VS403463` | Microsoft Entra Conditional Access policy (network location / device) | ErrorId `AdoConditionalAccess` - **no retry**; a new PAT will not help |
 | (none sent) | Write attempted on a `-Access Read` session | ErrorId `AdoReadOnlySession` - request never sent |
-| `403 Forbidden` | PAT scope insufficient for that operation | Immediate error - **no retry** |
+| `403 Forbidden` | PAT scope insufficient for that operation | ErrorId `AdoForbidden` (category `PermissionDenied`) - **no retry** |
 | `404 Not Found` | Non-existent resource ID or wrong URL | Immediate error - **no retry** |
 | `409 Conflict` | Resource state conflict (e.g. PR merge conflict, stale commit) | Original error rethrown (status + server message) - **no retry, any method** |
 | `429 Too Many Requests` | ADO rate limit (API quota) | Exponential backoff up to `$MaxRetries` |
 | `503 Service Unavailable` | ADO temporarily unavailable | Exponential backoff up to `$MaxRetries` |
 | Other 5xx | Transient server error | Linear backoff up to `$MaxRetries` |
+
+> **Stable ErrorIds for credential problems:** branch on `$_.FullyQualifiedErrorId` -
+> `AdoUnauthorized` (401), `AdoForbidden` (403), `AdoSignInPage` (HTTP 200 with a sign-in page,
+> i.e. missing or malformed credential) and `AdoConditionalAccess` (VS403463). The same ids are
+> raised by `Invoke-AdoGetPaged` and `Invoke-AdoDownload`; messages never contain the credential.
 
 > **Note:** Retries for 429/503 use `$RetryDelaySec * 2^attempt` seconds.  
 > With default values (MaxRetries=3, RetryDelaySec=2): 4 s → 8 s → fail.
