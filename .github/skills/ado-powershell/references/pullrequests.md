@@ -76,9 +76,16 @@ PATCH `status` to `abandoned` / `active`.
 | `-TransitionWorkItems` | off | |
 | `-MergeCommitMessage` | | |
 
-A **409 Conflict** (merge conflicts, failing policies, source branch moved) is thrown with
-ErrorId `AdoPullRequestConflict` and the server's message. Completion is asynchronous on the
-server: re-read the PR to see `status` / `mergeStatus`.
+ADO answers `200` even when it does not merge, so the returned PR is checked and `(ok) ... completed`
+is printed only when `status = completed`:
+
+| Outcome | Result |
+|---------|--------|
+| `status = completed` | Success message, PR returned |
+| `mergeStatus = conflicts` | Throws ErrorId `AdoPullRequestConflict` (includes `mergeFailureMessage`) |
+| `mergeStatus = rejectedByPolicy` \| `failure`, or PR abandoned | Throws ErrorId `AdoPullRequestNotCompleted` |
+| `status = active`, no failure (e.g. `queued`) | Warning "not completed yet", PR returned: re-read it to confirm |
+| HTTP **409** (source branch moved since `lastMergeSourceCommit`, TF401192; policies) | Throws ErrorId `AdoPullRequestConflict` and the server's message |
 
 ```powershell
 Complete-AdoPullRequest -RepoId 'MyRepo' -PullRequestId $pr.pullRequestId `

@@ -484,8 +484,12 @@ function Complete-AdoPullRequest {
       PATCHes status = completed with lastMergeSourceCommit and completionOptions. When
       -LastMergeSourceCommitId is omitted, the PR is fetched first and its current
       lastMergeSourceCommit is used; ADO rejects the completion if the source moved since.
-      A 409 Conflict (merge conflicts, policies, source changed) is thrown with ErrorId
-      AdoPullRequestConflict and the server's message.
+      Success is reported only when the returned PR has status = completed. ADO answers 200 even
+      when it does not merge, so the result is checked: mergeStatus = conflicts throws ErrorId
+      AdoPullRequestConflict; mergeStatus = rejectedByPolicy | failure (or an abandoned PR) throws
+      AdoPullRequestNotCompleted (both include mergeFailureMessage when present); a PR that is still
+      active without a failure (completion queued) returns the PR with a warning. A 409 Conflict
+      (stale lastMergeSourceCommit, TF401192, or policies) is also thrown as AdoPullRequestConflict.
     .PARAMETER MergeStrategy  noFastForward (default) | squash | rebase | rebaseMerge.
     .EXAMPLE   Complete-AdoPullRequest -RepoId 'MyRepo' -PullRequestId 42 -MergeStrategy squash -DeleteSourceBranch
     #>
@@ -553,7 +557,31 @@ function Complete-AdoPullRequest {
             [System.InvalidOperationException]::new($msg), 'AdoPullRequestConflict',
             [System.Management.Automation.ErrorCategory]::ResourceExists, $PullRequestId)
     }
-    Write-Host "(ok) Pull request #$PullRequestId completed ($MergeStrategy)" -ForegroundColor Green
+
+    # ADO answers 200 even when it did not merge: read the outcome from the returned PR.
+    $prStatus = if ($null -ne $r -and $r.PSObject.Properties['status']) { [string]$r.status } else { '' }
+    $mergeStatus = if ($null -ne $r -and $r.PSObject.Properties['mergeStatus']) { [string]$r.mergeStatus } else { '' }
+    if ($prStatus -eq 'completed') {
+        Write-Host "(ok) Pull request #$PullRequestId completed ($MergeStrategy)" -ForegroundColor Green
+        return $r
+    }
+    $failure = ''
+    if ($null -ne $r -and $r.PSObject.Properties['mergeFailureMessage'] -and $r.mergeFailureMessage) {
+        $failure = " $($r.mergeFailureMessage)"
+    }
+    $state = "status '$prStatus', mergeStatus '$mergeStatus'"
+    if ($mergeStatus -eq 'conflicts') {
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.InvalidOperationException]::new("Pull request #$PullRequestId was not completed: merge conflicts ($state).$failure"),
+            'AdoPullRequestConflict', [System.Management.Automation.ErrorCategory]::ResourceExists, $PullRequestId)
+    }
+    if ($mergeStatus -in 'rejectedByPolicy', 'failure' -or $prStatus -eq 'abandoned') {
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.InvalidOperationException]::new("Pull request #$PullRequestId was not completed ($state).$failure"),
+            'AdoPullRequestNotCompleted', [System.Management.Automation.ErrorCategory]::InvalidResult, $PullRequestId)
+    }
+    # Still active with no failure (queued/in progress): completion is asynchronous, so do not claim success.
+    Write-Warning "Pull request #$PullRequestId is not completed yet ($state); completion may be queued. Re-read the PR to confirm."
     return $r
 }
 

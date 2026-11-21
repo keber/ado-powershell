@@ -222,7 +222,7 @@ Full docs: [references/base.md](references/base.md)
 | `New-AdoPullRequest -RepoId <r> -SourceBranch <b> -TargetBranch <b> -Title <t>` | 🔴 Create (draft, reviewers, work items, labels) |
 | `Set-AdoPullRequest -RepoId <r> -PullRequestId <n> [-Title] [-Description] [-Draft\|-Publish] [-TargetBranch]` | 🔴 Edit / publish / retarget |
 | `Stop-AdoPullRequest` / `Restore-AdoPullRequest` | 🔴 Abandon (High) / reactivate |
-| `Complete-AdoPullRequest -RepoId <r> -PullRequestId <n> [-MergeStrategy] [-DeleteSourceBranch]` | 🔴 Merge (High); 409 → `AdoPullRequestConflict` |
+| `Complete-AdoPullRequest -RepoId <r> -PullRequestId <n> [-MergeStrategy] [-DeleteSourceBranch]` | 🔴 Merge (High); conflicts/409 → `AdoPullRequestConflict`, not completed → `AdoPullRequestNotCompleted` |
 | `Set-AdoPullRequestAutoComplete [-Disable]` | 🔴 Auto-complete as the current user |
 | `Get-AdoPullRequestReviewers` / `Add-` / `Remove-AdoPullRequestReviewer` | Reviewers (🔴 add/remove) |
 | `Set-AdoPullRequestVote -Vote <Approve\|ApproveWithSuggestions\|NoVote\|WaitForAuthor\|Reject>` / `Approve-AdoPullRequest` | 🔴 Vote as the authenticated user |
