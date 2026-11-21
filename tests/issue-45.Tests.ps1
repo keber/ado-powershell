@@ -27,23 +27,24 @@ Describe 'Get-AdoPipelineRuns -Branch (issue 45)' {
             [pscustomobject]@{ id = $Id; name = "run-$Id"; state = $State; result = $Result; createdDate = $Created }
         }
         Mock Invoke-AdoGet {
-            if ($Uri -match '/_apis/build/builds') {
-                # Server-side filtered: only builds on the requested branch.
-                [pscustomobject]@{ count = 3; value = @(
-                    [pscustomobject]@{ id = 5; sourceBranch = 'refs/heads/main' }
-                    [pscustomobject]@{ id = 4; sourceBranch = 'refs/heads/main' }
-                    [pscustomobject]@{ id = 1; sourceBranch = 'refs/heads/main' }
-                ) }
-            } else {
-                [pscustomobject]@{ count = 6; value = @(
-                    New-ListRun 1 'failed'    'completed' '2026-01-10T00:00:00Z'
-                    New-ListRun 2 'succeeded' 'completed' '2026-01-11T00:00:00Z'
-                    New-ListRun 3 'failed'    'completed' '2026-01-12T00:00:00Z'
-                    New-ListRun 4 'succeeded' 'completed' '2026-01-13T00:00:00Z'
-                    New-ListRun 5 'failed'    'completed' '2026-01-14T00:00:00Z'
-                    New-ListRun 6 'failed'    'completed' '2026-01-15T00:00:00Z'
-                ) }
-            }
+            [pscustomobject]@{ count = 6; value = @(
+                New-ListRun 1 'failed'    'completed' '2026-01-10T00:00:00Z'
+                New-ListRun 2 'succeeded' 'completed' '2026-01-11T00:00:00Z'
+                New-ListRun 3 'failed'    'completed' '2026-01-12T00:00:00Z'
+                New-ListRun 4 'succeeded' 'completed' '2026-01-13T00:00:00Z'
+                New-ListRun 5 'failed'    'completed' '2026-01-14T00:00:00Z'
+                New-ListRun 6 'failed'    'completed' '2026-01-15T00:00:00Z'
+            ) }
+        }
+        # Invoke-AdoGetPaged returns the items already merged across all pages. Here the
+        # branch's builds are "spread over several pages" (ids 5,4 then 1), as the real
+        # paged helper would hand them back.
+        Mock Invoke-AdoGetPaged {
+            @(
+                [pscustomobject]@{ id = 5; sourceBranch = 'refs/heads/main' }
+                [pscustomobject]@{ id = 4; sourceBranch = 'refs/heads/main' }
+                [pscustomobject]@{ id = 1; sourceBranch = 'refs/heads/main' }
+            )
         }
     }
 
@@ -61,7 +62,7 @@ Describe 'Get-AdoPipelineRuns -Branch (issue 45)' {
 
     It 'queries the Build API with definitions and a refs/heads/ branchName' {
         Get-AdoPipelineRuns -PipelineId 42 -Branch 'main' | Out-Null
-        Should -Invoke Invoke-AdoGet -ParameterFilter {
+        Should -Invoke Invoke-AdoGetPaged -ParameterFilter {
             $Uri -match '/_apis/build/builds\?' -and $Uri -match 'definitions=42' -and
             $Uri -match 'branchName=refs%2Fheads%2Fmain' -and $Uri -match 'api-version=7\.1'
         }
@@ -69,14 +70,14 @@ Describe 'Get-AdoPipelineRuns -Branch (issue 45)' {
 
     It 'does not double the prefix and encodes slashes in feature branches' {
         Get-AdoPipelineRuns -PipelineId 42 -Branch 'refs/heads/feature/x' | Out-Null
-        Should -Invoke Invoke-AdoGet -ParameterFilter {
+        Should -Invoke Invoke-AdoGetPaged -ParameterFilter {
             $Uri -match 'branchName=refs%2Fheads%2Ffeature%2Fx(&|$)'
         }
     }
 
     It 'keeps the project name escaped in both URLs (issue 41)' {
         Get-AdoPipelineRuns -PipelineId 42 -Branch 'main' | Out-Null
-        Should -Invoke Invoke-AdoGet -ParameterFilter {
+        Should -Invoke Invoke-AdoGetPaged -ParameterFilter {
             $Uri -match 'Fabrikam%20QA/_apis/build/builds'
         }
         Should -Invoke Invoke-AdoGet -ParameterFilter {
@@ -90,15 +91,39 @@ Describe 'Get-AdoPipelineRuns -Branch (issue 45)' {
     }
 
     It 'returns no runs when the branch has no builds' {
-        Mock Invoke-AdoGet {
-            if ($Uri -match '/_apis/build/builds') { [pscustomobject]@{ count = 0; value = @() } }
-            else { [pscustomobject]@{ value = @(New-ListRun 1 'failed' 'completed' '2026-01-10T00:00:00Z') } }
-        }
+        Mock Invoke-AdoGetPaged { @() }
         @(Get-AdoPipelineRuns -PipelineId 42 -Branch 'nope').Count | Should -Be 0
+    }
+
+    It 'collects builds through the paged helper (every page, not just the first)' {
+        @(Get-AdoPipelineRuns -PipelineId 42 -Branch 'main' -Top 10).Count | Should -Be 3
+        Should -Invoke Invoke-AdoGetPaged -Times 1 -Exactly
+        Should -Invoke Invoke-AdoGet -Times 1 -Exactly -ParameterFilter { $Uri -match '/pipelines/42/runs' }
+        Should -Invoke Invoke-AdoGet -Times 0 -ParameterFilter { $Uri -match '/_apis/build/builds' }
+    }
+
+    It 'bounds the lookup with queryOrder and an escaped minTime (oldest run minus 1 day, UTC)' {
+        Get-AdoPipelineRuns -PipelineId 42 -Branch 'main' | Out-Null
+        Should -Invoke Invoke-AdoGetPaged -ParameterFilter {
+            $Uri -match 'queryOrder=queueTimeDescending' -and
+            $Uri -match 'minTime=2026-01-09T00%3A00%3A00Z(&|$)'
+        }
+    }
+
+    It 'skips the Build API entirely when the pipeline has no runs' {
+        Mock Invoke-AdoGet { [pscustomobject]@{ count = 0; value = @() } }
+        @(Get-AdoPipelineRuns -PipelineId 42 -Branch 'main').Count | Should -Be 0
+        Should -Invoke Invoke-AdoGetPaged -Times 0 -Exactly
+    }
+
+    It 'omits minTime when no run has a createdDate' {
+        Mock Invoke-AdoGet { [pscustomobject]@{ value = @([pscustomobject]@{ id = 1; state = 'completed' }) } }
+        @(Get-AdoPipelineRuns -PipelineId 42 -Branch 'main').Count | Should -Be 1
+        Should -Invoke Invoke-AdoGetPaged -ParameterFilter { $Uri -notmatch 'minTime' }
     }
 
     It 'does not call the Build API when -Branch is not set' {
         Get-AdoPipelineRuns -PipelineId 42 | Out-Null
-        Should -Invoke Invoke-AdoGet -Times 0 -ParameterFilter { $Uri -match '/_apis/build/builds' }
+        Should -Invoke Invoke-AdoGetPaged -Times 0 -Exactly
     }
 }

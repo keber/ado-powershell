@@ -41,9 +41,10 @@ function Get-AdoPipelineRuns {
         The Pipelines Runs - List API (7.1) supports no filter parameters, and its items
         carry no 'resources' (so no branch), so State/Result/date filters are applied
         client-side on the runs it returns. -Branch is resolved server-side with the Build
-        API (Builds - List, definitions={PipelineId}&branchName=...; a YAML pipeline id equals
-        its build definition id) and intersected with the run list by run id. Output is always
-        the Pipelines API run object. -Branch therefore needs Build (read) scope in addition
+        API (Builds - List, definitions={PipelineId}&branchName=..., all pages, bounded to the
+        runs window; a YAML pipeline id equals its build definition id) and intersected with
+        the run list by run id. Output is always the Pipelines API run object. -Branch
+        therefore needs Build (read) scope in addition
         to Pipelines. Results are ordered most recent first (by createdDate) before -Top.
     .PARAMETER Top          Maximum number of runs to return after filtering.
     .PARAMETER Branch       Filter by branch name (e.g. 'main' or 'refs/heads/feature/x').
@@ -73,18 +74,6 @@ function Get-AdoPipelineRuns {
     $r = Invoke-AdoGet -Uri $uri -Headers $Headers
     $runs = @(if ($r.PSObject.Properties['value']) { $r.value })
 
-    # Branch is not available on Runs - List items: ask the Build API which builds (== runs,
-    # same id) belong to the branch. No $top is sent so -Top applies after all other filters.
-    $branchIds = $null
-    if ($Branch) {
-        $full = if ($Branch -like 'refs/*') { $Branch } else { "refs/heads/$Branch" }
-        $bUri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/build/builds" +
-                "?definitions=$PipelineId&branchName=$([uri]::EscapeDataString($full))&api-version=$ApiV"
-        $b = Invoke-AdoGet -Uri $bUri -Headers $Headers
-        $branchIds = @{}
-        if ($b.PSObject.Properties['value']) { foreach ($x in @($b.value)) { $branchIds["$($x.id)"] = $true } }
-    }
-
     # StrictMode-safe property read: returns $null when a property is missing.
     $prop = { param($o, $n) if ($null -ne $o -and $o.PSObject.Properties[$n]) { $o.$n } else { $null } }
     $toDate = {
@@ -95,6 +84,28 @@ function Get-AdoPipelineRuns {
         if ([datetimeoffset]::TryParse("$v", [Globalization.CultureInfo]::InvariantCulture,
                 [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$d)) { return $d.UtcDateTime }
         throw "Invalid date value: '$v'"
+    }
+
+    # Branch is not available on Runs - List items: ask the Build API which builds (== runs,
+    # same id) belong to the branch. The lookup is paged (continuation token) and bounded to the
+    # runs window with minTime (oldest run createdDate minus a 1-day margin, since a build is
+    # queued slightly before its run's createdDate); the id intersection keeps the result exact.
+    $branchIds = $null
+    if ($Branch) {
+        $branchIds = @{}
+        if ($runs.Count -gt 0) {
+            $full = if ($Branch -like 'refs/*') { $Branch } else { "refs/heads/$Branch" }
+            $bUri = "$(Get-AdoProjectUrl -Org $Org -Project $Project)/_apis/build/builds" +
+                    "?definitions=$PipelineId&branchName=$([uri]::EscapeDataString($full))" +
+                    "&queryOrder=queueTimeDescending"
+            $dates = @($runs | ForEach-Object { & $toDate (& $prop $_ 'createdDate') } | Where-Object { $null -ne $_ })
+            if ($dates.Count -gt 0) {
+                $min = ($dates | Sort-Object | Select-Object -First 1).AddDays(-1)
+                $bUri += "&minTime=$([uri]::EscapeDataString($min.ToString('yyyy-MM-ddTHH:mm:ssZ', [Globalization.CultureInfo]::InvariantCulture)))"
+            }
+            $bUri += "&api-version=$ApiV"
+            foreach ($x in @(Invoke-AdoGetPaged -Uri $bUri -Headers $Headers)) { $branchIds["$($x.id)"] = $true }
+        }
     }
 
     $fromDate = & $toDate $CreatedFrom

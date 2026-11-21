@@ -33,21 +33,21 @@ Describe 'H1 - Get-AdoPipelineRuns filters' {
         # The Pipelines Runs - List API (7.1) documents only api-version, so the
         # service returns every run regardless of the filter query parameters.
         Mock Invoke-AdoGet {
-            if ($Uri -match '/_apis/build/builds\?.*branchName=([^&]+)') {
-                $b = [uri]::UnescapeDataString($Matches[1])
-                [pscustomobject]@{ value = @($script:BranchOfRun.Keys | Where-Object { $script:BranchOfRun[$_] -eq $b } |
-                    ForEach-Object { [pscustomobject]@{ id = $_; sourceBranch = $b } }) }
-            } else {
-                [pscustomobject]@{ value = @(
-                    New-FakeRun 1 'failed'    'completed' '2026-01-10T00:00:00Z'
-                    New-FakeRun 2 'succeeded' 'completed' '2026-01-11T00:00:00Z'
-                    New-FakeRun 3 'failed'    'completed' '2026-01-12T00:00:00Z'
-                    New-FakeRun 4 'failed'    'completed' '2026-01-13T00:00:00Z'
-                    New-FakeRun 5 'failed'    'completed' '2026-01-14T00:00:00Z'
-                    New-FakeRun 6 'succeeded' 'inProgress' '2026-01-15T00:00:00Z'
-                    [pscustomobject]@{ id = 7; state = 'completed' }
-                ) }
-            }
+            [pscustomobject]@{ value = @(
+                New-FakeRun 1 'failed'    'completed' '2026-01-10T00:00:00Z'
+                New-FakeRun 2 'succeeded' 'completed' '2026-01-11T00:00:00Z'
+                New-FakeRun 3 'failed'    'completed' '2026-01-12T00:00:00Z'
+                New-FakeRun 4 'failed'    'completed' '2026-01-13T00:00:00Z'
+                New-FakeRun 5 'failed'    'completed' '2026-01-14T00:00:00Z'
+                New-FakeRun 6 'succeeded' 'inProgress' '2026-01-15T00:00:00Z'
+                [pscustomobject]@{ id = 7; state = 'completed' }
+            ) }
+        }
+        Mock Invoke-AdoGetPaged {
+            $null = $Uri -match 'branchName=([^&]+)'
+            $b = [uri]::UnescapeDataString($Matches[1])
+            @($script:BranchOfRun.Keys | Where-Object { $script:BranchOfRun[$_] -eq $b } |
+                ForEach-Object { [pscustomobject]@{ id = $_; sourceBranch = $b } })
         }
     }
 
