@@ -21,41 +21,40 @@ BeforeAll {
 
 Describe 'H1 - Get-AdoPipelineRuns filters' {
     BeforeAll {
-        function New-FakeRun([int]$Id, [string]$Ref, [string]$Result, [string]$State, [string]$Created) {
-            [pscustomobject]@{
-                id          = $Id
-                state       = $State
-                result      = $Result
-                createdDate = $Created
-                resources   = [pscustomobject]@{
-                    repositories = [pscustomobject]@{
-                        self = [pscustomobject]@{ refName = $Ref }
-                    }
-                }
-            }
+        # Runs - List items carry no 'resources' (issue #45); the branch of each run is
+        # known only to the Build API, which filters server-side by branchName.
+        function New-FakeRun([int]$Id, [string]$Result, [string]$State, [string]$Created) {
+            [pscustomobject]@{ id = $Id; state = $State; result = $Result; createdDate = $Created }
+        }
+        $script:BranchOfRun = @{
+            1 = 'refs/heads/main'; 2 = 'refs/heads/main'; 3 = 'refs/heads/feature/x'
+            4 = 'refs/heads/main'; 5 = 'refs/heads/main'; 6 = 'refs/heads/other'
         }
         # The Pipelines Runs - List API (7.1) documents only api-version, so the
         # service returns every run regardless of the filter query parameters.
         Mock Invoke-AdoGet {
             [pscustomobject]@{ value = @(
-                New-FakeRun 1 'refs/heads/main'      'failed'    'completed' '2026-01-10T00:00:00Z'
-                New-FakeRun 2 'refs/heads/main'      'succeeded' 'completed' '2026-01-11T00:00:00Z'
-                New-FakeRun 3 'refs/heads/feature/x' 'failed'    'completed' '2026-01-12T00:00:00Z'
-                New-FakeRun 4 'refs/heads/main'      'failed'    'completed' '2026-01-13T00:00:00Z'
-                New-FakeRun 5 'refs/heads/main'      'failed'    'completed' '2026-01-14T00:00:00Z'
-                New-FakeRun 6 'refs/heads/other'     'succeeded' 'inProgress' '2026-01-15T00:00:00Z'
+                New-FakeRun 1 'failed'    'completed' '2026-01-10T00:00:00Z'
+                New-FakeRun 2 'succeeded' 'completed' '2026-01-11T00:00:00Z'
+                New-FakeRun 3 'failed'    'completed' '2026-01-12T00:00:00Z'
+                New-FakeRun 4 'failed'    'completed' '2026-01-13T00:00:00Z'
+                New-FakeRun 5 'failed'    'completed' '2026-01-14T00:00:00Z'
+                New-FakeRun 6 'succeeded' 'inProgress' '2026-01-15T00:00:00Z'
                 [pscustomobject]@{ id = 7; state = 'completed' }
             ) }
+        }
+        Mock Invoke-AdoGetPaged {
+            $null = $Uri -match 'branchName=([^&]+)'
+            $b = [uri]::UnescapeDataString($Matches[1])
+            @($script:BranchOfRun.Keys | Where-Object { $script:BranchOfRun[$_] -eq $b } |
+                ForEach-Object { [pscustomobject]@{ id = $_; sourceBranch = $b } })
         }
     }
 
     It 'returns only runs matching -Branch and -Result when the API ignores those query parameters' {
         $runs = @(Get-AdoPipelineRuns -PipelineId 7 -Branch 'main' -Result 'failed' -Top 10)
-        $runs.Count | Should -BeGreaterThan 0
-        foreach ($r in $runs) {
-            $r.resources.repositories.self.refName | Should -Be 'refs/heads/main'
-            $r.result | Should -Be 'failed'
-        }
+        ($runs.id | Sort-Object) -join ',' | Should -Be '1,4,5'
+        foreach ($r in $runs) { $r.result | Should -Be 'failed' }
     }
 
     It 'returns at most -Top runs when the API ignores $top' {
@@ -63,10 +62,11 @@ Describe 'H1 - Get-AdoPipelineRuns filters' {
         $runs.Count | Should -BeLessOrEqual 2
     }
 
-    It 'does not send unsupported query parameters' {
+    It 'does not send unsupported query parameters to the Runs - List endpoint' {
         Get-AdoPipelineRuns -PipelineId 7 -Top 3 -Branch 'main' -State 'completed' -Result 'failed' `
             -CreatedFrom '2026-01-01' -CreatedTo '2026-02-01' | Out-Null
         Should -Invoke Invoke-AdoGet -ParameterFilter {
+            $Uri -match '/pipelines/7/runs\?' -and
             $Uri -notmatch 'top=|branchName|runStateFilter|runResultFilter|minTime|maxTime' -and $Uri -match 'api-version=7\.1$'
         }
     }

@@ -829,7 +829,7 @@ function Invoke-AdoDownload {
     # -PassThru keeps the response object alongside -OutFile (5.1 and 7), so the Content-Type
     # can be inspected: ADO answers a bad/expired PAT with its HTML sign-in page and HTTP 200.
     try {
-        $response = Invoke-WebRequest -Uri $Uri -Headers $Headers -OutFile $OutFile -PassThru `
+        $response = Invoke-WebRequest -Uri $Uri -Headers $Headers -OutFile $OutFile -PassThru -UseBasicParsing `
             -TimeoutSec (Get-AdoTimeoutSec -Transfer -Override $TimeoutSec) -ErrorAction Stop
     } catch {
         if (Test-AdoConditionalAccessError -ErrorRecord $_) { throw (New-AdoConditionalAccessError -Uri $Uri) }
